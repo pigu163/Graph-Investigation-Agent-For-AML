@@ -1,0 +1,30 @@
+# Python bytecode and virtual environments
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+
+# Test, lint, and type-check caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# Local environment variables
+.env
+.env.*
+!.env.example
+
+# Local agent instructions
+AGENTS.md
+
+# Jupyter and macOS
+.ipynb_checkpoints/
+.DS_Store
