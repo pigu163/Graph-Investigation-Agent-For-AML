@@ -18,7 +18,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-streaming = ["confluent-kafka>=2.8"]
+streaming = [
+    "confluent-kafka>=2.8",
+    "psycopg[binary]>=3.2",
+]
 
 [project.scripts]
 graph-investigation-agent-for-aml = "graph_investigation_agent_for_aml:main"

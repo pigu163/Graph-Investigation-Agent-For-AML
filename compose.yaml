@@ -45,12 +45,31 @@ services:
 
   producer:
     build: .
+    image: aml-python:local
     profiles: [etl]
     depends_on:
       kafka:
         condition: service_healthy
     volumes:
       - ./dataset:/dataset:ro
+
+  raw-writer:
+    build: .
+    image: aml-python:local
+    entrypoint: ["python", "-m", "graph_investigation_agent_for_aml.raw_writer"]
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      KAFKA_TOPIC: aml-transactions
+      KAFKA_GROUP_ID: aml-raw-writer-v1
+      PGHOST: postgres
+      PGDATABASE: aml_db
+      PGUSER: aml_user
+      PGPASSWORD: aml_local_dev
+    depends_on:
+      kafka:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
 
   kafka-ui:
     image: provectuslabs/kafka-ui:latest
