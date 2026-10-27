@@ -22,6 +22,9 @@ htmlcov/
 .env.*
 !.env.example
 
+# Downloaded and extracted AML datasets are kept locally, not in Git.
+dataset/
+
 # Local agent instructions
 AGENTS.md
 
