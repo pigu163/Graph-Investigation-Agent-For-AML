@@ -4,6 +4,8 @@
 
 The local IBM AML Small archives and extracted CSV files belong in `dataset/`. They are ignored by Git and are not included in the Docker image.
 
+Kafka messages are stored under `volume/kafka/`, and PostgreSQL files under `volume/postgres/`. Kafka's empty auxiliary `secrets` and shared-config mount points are mapped to `volume/kafka-secrets/` and `volume/kafka-config/`. These folders are ignored by Git. Kafka UI has no persistent data of its own. To reset local service data, stop Compose and remove the contents of the relevant folder.
+
 ### Start Kafka and Kafka UI
 
 Make sure Docker Desktop is running, then start Kafka and its browser UI from the repository root:
@@ -13,6 +15,8 @@ docker compose up -d kafka-ui
 ```
 
 Compose starts Kafka first and waits for it to become healthy before starting Kafka UI. Open [http://localhost:8080](http://localhost:8080). Select **Topics → `aml-transactions` → Messages** to inspect records.
+
+PostgreSQL is available on `localhost:5432` with database `aml_db`, user `aml_user`, and local development password `aml_local_dev`. For example, connect from the host with `psql -h localhost -p 5432 -U aml_user -d aml_db`.
 
 ### Run a short replay
 
@@ -49,4 +53,4 @@ The producer preserves the CSV row order and source event timestamp. The dataset
 docker compose down
 ```
 
-This stops Kafka and Kafka UI. Kafka messages remain in the Docker-managed `kafka_data` volume.
+This stops Kafka, Kafka UI, and PostgreSQL. Their data remains in the matching folders under `volume/`.

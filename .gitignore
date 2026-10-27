@@ -25,6 +25,9 @@ htmlcov/
 # Downloaded and extracted AML datasets are kept locally, not in Git.
 dataset/
 
+# Local Kafka and PostgreSQL data files.
+volume/
+
 # Local agent instructions
 AGENTS.md
 
