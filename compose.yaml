@@ -18,21 +18,80 @@ services:
       KAFKA_LOG_DIRS: /var/lib/kafka/data
       CLUSTER_ID: 4L6g3nShT-eMCtK--X86sw
     volumes:
-      - kafka_data:/var/lib/kafka/data
+      - ./volume/kafka:/var/lib/kafka/data
+      - ./volume/kafka-secrets:/etc/kafka/secrets
+      - ./volume/kafka-config:/mnt/shared/config
+    depends_on:
+      kafka-storage-init:
+        condition: service_completed_successfully
     healthcheck:
       test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:29092 --list >/dev/null 2>&1"]
       interval: 5s
       timeout: 5s
       retries: 20
 
+  kafka-storage-init:
+    image: apache/kafka:4.0.1
+    user: "0:0"
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        kafka_uid=$$(id -u appuser)
+        kafka_gid=$$(id -g appuser)
+        for directory in /var/lib/kafka/data /etc/kafka/secrets /mnt/shared/config; do
+          if [ "$$(stat -c %u "$$directory")" != "$$kafka_uid" ]; then
+            chown -R "$$kafka_uid:$$kafka_gid" "$$directory"
+          fi
+        done
+    volumes:
+      - ./volume/kafka:/var/lib/kafka/data
+      - ./volume/kafka-secrets:/etc/kafka/secrets
+      - ./volume/kafka-config:/mnt/shared/config
+
+  postgres:
+    image: postgres:17-alpine
+    ports:
+      - "127.0.0.1:5432:5432"
+    environment:
+      POSTGRES_DB: aml_db
+      POSTGRES_USER: aml_user
+      POSTGRES_PASSWORD: aml_local_dev
+    volumes:
+      - ./volume/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
   producer:
     build: .
+    image: aml-python:local
     profiles: [etl]
     depends_on:
       kafka:
         condition: service_healthy
     volumes:
       - ./dataset:/dataset:ro
+      - ./tests/fixtures:/fixtures:ro
+
+  raw-writer:
+    build: .
+    image: aml-python:local
+    entrypoint: ["python", "-m", "graph_investigation_agent_for_aml.raw_writer"]
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      KAFKA_TOPIC: aml-transactions
+      KAFKA_GROUP_ID: aml-raw-writer-v1
+      PGHOST: postgres
+      PGDATABASE: aml_db
+      PGUSER: aml_user
+      PGPASSWORD: aml_local_dev
+    depends_on:
+      kafka:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
 
   kafka-ui:
     image: provectuslabs/kafka-ui:latest
@@ -45,5 +104,80 @@ services:
       kafka:
         condition: service_healthy
 
-volumes:
-  kafka_data:
+  flink-jobmanager:
+    build:
+      context: .
+      dockerfile: flink/Dockerfile
+    image: aml-flink:local
+    command: jobmanager
+    ports:
+      - "127.0.0.1:8081:8081"
+    environment:
+      FLINK_PROPERTIES: |
+        jobmanager.rpc.address: flink-jobmanager
+        rest.address: flink-jobmanager
+        rest.bind-address: 0.0.0.0
+        jobmanager.memory.process.size: 768m
+        taskmanager.memory.process.size: 1024m
+        taskmanager.numberOfTaskSlots: 2
+        parallelism.default: 1
+    volumes:
+      - ./volume/flink:/opt/flink/state
+    depends_on:
+      flink-state-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8081/overview >/dev/null"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  flink-state-init:
+    image: aml-flink:local
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        mkdir -p /opt/flink/state
+        flink_uid=$$(id -u flink)
+        state_uid=$$(stat -c %u /opt/flink/state)
+        if [ "$$state_uid" != "$$flink_uid" ]; then
+          chown -R flink:flink /opt/flink/state
+        fi
+    user: "0:0"
+    volumes:
+      - ./volume/flink:/opt/flink/state
+
+  flink-taskmanager:
+    image: aml-flink:local
+    command: taskmanager
+    environment:
+      FLINK_PROPERTIES: |
+        jobmanager.rpc.address: flink-jobmanager
+        taskmanager.memory.process.size: 1024m
+        taskmanager.numberOfTaskSlots: 2
+        parallelism.default: 1
+    volumes:
+      - ./volume/flink:/opt/flink/state
+    depends_on:
+      flink-jobmanager:
+        condition: service_healthy
+
+  flink-submit:
+    image: aml-flink:local
+    profiles: [etl]
+    entrypoint: ["/docker-entrypoint.sh", "bash", "/opt/flink/aml/submit.sh"]
+    environment:
+      FLINK_PROPERTIES: |
+        jobmanager.rpc.address: flink-jobmanager
+        rest.address: flink-jobmanager
+    volumes:
+      - ./volume/flink:/opt/flink/state
+    depends_on:
+      flink-jobmanager:
+        condition: service_healthy
+      flink-taskmanager:
+        condition: service_started
+      kafka:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy

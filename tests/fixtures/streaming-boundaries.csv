@@ -1,0 +1,9 @@
+Timestamp,From Bank,Account,To Bank,Account,Amount Received,Receiving Currency,Amount Paid,Payment Currency,Payment Format,Is Laundering
+2022/09/01 00:00,01,A,02,X,10.00,US Dollar,10.00,US Dollar,ACH,0
+2022/09/01 00:30,01,A,02,X,2.00,US Dollar,2.00,US Dollar,ACH,0
+2022/09/01 00:59,01,B,02,X,20.00,US Dollar,20.00,US Dollar,ACH,0
+2022/09/01 01:00,02,X,03,C,5.00,US Dollar,5.00,US Dollar,ACH,0
+2022/09/01 01:01,02,X,02,X,7.00,US Dollar,7.00,US Dollar,Reinvestment,0
+2022/09/01 01:02,01,D,02,X,2.00,Euro,3.00,US Dollar,ACH,0
+2022/09/01 01:30,01,A,02,X,0.00000001,US Dollar,0.00000001,US Dollar,ACH,0
+2022/09/01 02:02,04,E,05,F,1.00,US Dollar,1.00,US Dollar,ACH,0
