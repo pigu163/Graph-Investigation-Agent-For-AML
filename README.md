@@ -4,7 +4,7 @@
 
 The local IBM AML Small archives and extracted CSV files belong in `dataset/`. They are ignored by Git and are not included in the Docker image.
 
-Kafka messages are stored under `volume/kafka/`, and PostgreSQL files under `volume/postgres/`. Kafka's empty auxiliary `secrets` and shared-config mount points are mapped to `volume/kafka-secrets/` and `volume/kafka-config/`. These folders are ignored by Git. Kafka UI has no persistent data of its own. To reset local service data, stop Compose and remove the contents of the relevant folder.
+Kafka messages are stored under `volume/kafka/`, and PostgreSQL files under `volume/postgres/`. Kafka's empty auxiliary `secrets` and shared-config mount points are mapped to `volume/kafka-secrets/` and `volume/kafka-config/`. These folders are ignored by Git. Kafka UI has no persistent data of its own. See the development reset instructions below to clear transactions or completely rebuild local storage.
 
 ### Start Kafka and Kafka UI
 
@@ -88,3 +88,99 @@ docker compose down
 ```
 
 This stops Kafka, Kafka UI, PostgreSQL, and Raw Writer. Their data remains in the matching folders under `volume/`.
+
+## Reset data during development
+
+Run these commands from the repository root. Both reset options delete stored data. The original files under `dataset/` and the project source code are preserved. Choose one option; clearing test transactions normally does not require deleting `volume/`.
+
+### Clear transactions and consumer progress (usual reset)
+
+This removes the messages in `aml-transactions`, resets Raw Writer's Kafka progress, and clears the SQL transaction rows. The PostgreSQL database, table structure, and local storage folders remain.
+
+First stop any running Producer (press **Ctrl+C** in its terminal), then stop Raw Writer so it cannot write old messages back into PostgreSQL:
+
+```bash
+docker compose stop raw-writer
+docker compose up -d --wait kafka postgres
+```
+
+List consumer groups. If `aml-raw-writer-v1` appears, delete it using the second command. If it is absent, skip the delete command: a new group that has not committed any messages may not exist yet.
+
+```bash
+docker compose exec kafka /opt/kafka/bin/kafka-consumer-groups.sh \
+  --bootstrap-server localhost:29092 --list
+
+docker compose exec kafka /opt/kafka/bin/kafka-consumer-groups.sh \
+  --bootstrap-server localhost:29092 --delete --group aml-raw-writer-v1
+```
+
+Delete the transaction topic and clear the SQL table:
+
+```bash
+docker compose exec kafka /opt/kafka/bin/kafka-topics.sh \
+  --bootstrap-server localhost:29092 --delete --if-exists --topic aml-transactions
+
+docker compose exec postgres psql -v ON_ERROR_STOP=1 -U aml_user -d aml_db \
+  -c "TRUNCATE TABLE transactions;"
+```
+
+Kafka topic deletion is asynchronous. Run the following command and wait until `aml-transactions` is no longer listed before recreating it:
+
+```bash
+docker compose exec kafka /opt/kafka/bin/kafka-topics.sh \
+  --bootstrap-server localhost:29092 --list
+```
+
+Create a fresh topic, then restart Raw Writer and Kafka UI:
+
+```bash
+docker compose exec kafka /opt/kafka/bin/kafka-topics.sh \
+  --bootstrap-server localhost:29092 --create --topic aml-transactions \
+  --partitions 1 --replication-factor 1
+
+docker compose up -d raw-writer kafka-ui
+```
+
+Before running Producer again, verify that Kafka's earliest and latest offsets are both `0`, and that the SQL count is `0`:
+
+```bash
+docker compose exec kafka /opt/kafka/bin/kafka-get-offsets.sh \
+  --bootstrap-server localhost:29092 --topic aml-transactions --time -2
+
+docker compose exec kafka /opt/kafka/bin/kafka-get-offsets.sh \
+  --bootstrap-server localhost:29092 --topic aml-transactions --time -1
+
+docker compose exec postgres psql -U aml_user -d aml_db \
+  -c "SELECT count(*) FROM transactions;"
+```
+
+Clearing only PostgreSQL does not reset Kafka messages or consumer progress. To rebuild SQL rows from existing Kafka messages instead, stop Raw Writer, truncate the table, delete its consumer group, and restart Raw Writer without deleting the topic.
+
+### Completely rebuild local storage
+
+Use this option to start Kafka and PostgreSQL from their initial state. It deletes all local Kafka topics and consumer progress, and all PostgreSQL databases, tables, and custom database users stored by this project. PostgreSQL recreates the database and credentials configured in Compose at the next startup.
+
+Stop any running Producer, then stop and remove the project's containers before deleting their data folders:
+
+```bash
+docker compose down
+
+rm -rf -- ./volume/kafka ./volume/postgres ./volume/kafka-secrets ./volume/kafka-config
+
+mkdir -p ./volume/kafka ./volume/postgres ./volume/kafka-secrets ./volume/kafka-config
+
+docker compose up -d --wait kafka postgres
+```
+
+Create the empty transaction topic, then start Raw Writer and Kafka UI. Raw Writer recreates the SQL table automatically:
+
+```bash
+docker compose exec kafka /opt/kafka/bin/kafka-topics.sh \
+  --bootstrap-server localhost:29092 --create --topic aml-transactions \
+  --partitions 1 --replication-factor 1
+
+docker compose up -d --build raw-writer kafka-ui
+docker compose logs --tail 20 raw-writer
+```
+
+Once the writer logs `Reading aml-transactions into PostgreSQL transactions`, use the offset and SQL count checks above to verify the empty state. `docker compose down -v` does not remove these host bind-mount folders; deleting their contents explicitly is what resets local storage.
