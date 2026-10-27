@@ -4,6 +4,14 @@
 
 The downloaded and extracted datasets stay in the local `dataset/` directory and are not committed to Git.
 
+Start the Kafka broker and its browser UI with:
+
+```bash
+docker compose up -d kafka-ui
+```
+
+Open [http://localhost:8080](http://localhost:8080) to browse the local Kafka cluster and topics.
+
 ```bash
 docker compose up -d kafka
 docker compose run --rm producer \
