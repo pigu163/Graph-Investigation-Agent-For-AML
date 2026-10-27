@@ -17,6 +17,9 @@ dependencies = [
     "scikit-learn>=1.9.1",
 ]
 
+[project.optional-dependencies]
+streaming = ["confluent-kafka>=2.8"]
+
 [project.scripts]
 graph-investigation-agent-for-aml = "graph_investigation_agent_for_aml:main"
 
