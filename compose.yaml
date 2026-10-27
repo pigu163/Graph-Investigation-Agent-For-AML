@@ -1,4 +1,17 @@
 services:
+  frontend:
+    build:
+      context: ./frontend
+    image: aml-frontend:local
+    ports:
+      - "127.0.0.1:3000:3000"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+
   kafka:
     image: apache/kafka:4.0.1
     ports:
