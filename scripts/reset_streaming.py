@@ -31,6 +31,14 @@ def sql(statement):
                    "-U", "aml_user", "-d", "aml_db", "-At", input=statement)
 
 
+def wait_for_transactions_table():
+    deadline = time.monotonic() + 60
+    while sql("SELECT to_regclass('public.transactions');") != "transactions":
+        if time.monotonic() >= deadline:
+            raise TimeoutError("Raw Writer has not created the transactions table")
+        time.sleep(1)
+
+
 def reset():
     # Stop readers first: neither Kafka offsets nor checkpoints may restore old data.
     compose("stop", "raw-writer", "kafka-ui", "flink-taskmanager", "flink-jobmanager")
@@ -55,12 +63,19 @@ def reset():
     compose("run", "--rm", "--no-deps", "--user", "0", "--entrypoint", "sh",
             "flink-submit", "-c", "find /opt/flink/state -mindepth 1 -delete")
     sql((ROOT / "flink/schema.sql").read_text())
-    sql("TRUNCATE TABLE transactions, account_window_features;")
+    tables = set(sql("SELECT tablename FROM pg_tables WHERE schemaname='public';").splitlines())
+    existing_tables = [
+        table for table in ("transactions", "account_window_features")
+        if table in tables
+    ]
+    if existing_tables:
+        sql("TRUNCATE TABLE " + ", ".join(existing_tables) + ";")
     kafka("kafka-topics", "--create", "--topic", "aml-transactions",
           "--partitions", "1", "--replication-factor", "1")
     compose("up", "-d", "--wait", "raw-writer", "kafka-ui",
             "flink-jobmanager", "flink-taskmanager")
 
+    wait_for_transactions_table()
     assert sql("SELECT (SELECT count(*) FROM transactions), "
                "(SELECT count(*) FROM account_window_features);") == "0|0"
     for timestamp in ("-2", "-1"):

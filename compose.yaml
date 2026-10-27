@@ -102,11 +102,29 @@ services:
         parallelism.default: 1
     volumes:
       - ./volume/flink:/opt/flink/state
+    depends_on:
+      flink-state-init:
+        condition: service_completed_successfully
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://localhost:8081/overview >/dev/null"]
       interval: 5s
       timeout: 5s
       retries: 30
+
+  flink-state-init:
+    image: aml-flink:local
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        mkdir -p /opt/flink/state
+        flink_uid=$$(id -u flink)
+        state_uid=$$(stat -c %u /opt/flink/state)
+        if [ "$$state_uid" != "$$flink_uid" ]; then
+          chown -R flink:flink /opt/flink/state
+        fi
+    user: "0:0"
+    volumes:
+      - ./volume/flink:/opt/flink/state
 
   flink-taskmanager:
     image: aml-flink:local

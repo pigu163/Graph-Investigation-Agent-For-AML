@@ -95,6 +95,8 @@ docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -U aml_user -d aml_db < 
 docker compose run --rm flink-submit
 ```
 
+Compose runs a one-shot `flink-state-init` service before the JobManager. It prepares `volume/flink/` for the Flink user so fresh Linux bind mounts are writable for checkpoints.
+
 Open [Flink Web UI](http://localhost:8081). Under **Running Jobs**, select `aml-account-features-v1` to inspect its operators, records, watermarks and checkpoints. **Task Managers** shows the worker. Kafka UI remains at [http://localhost:8080](http://localhost:8080). A successful cluster startup alone does not submit a job; check that exactly one feature job is running. Cancel an existing job in the UI before submitting another.
 
 The job reads `aml-transactions` independently of Raw Writer, deduplicates transactions inside one-hour event-time windows, and upserts these features into `account_window_features`:
