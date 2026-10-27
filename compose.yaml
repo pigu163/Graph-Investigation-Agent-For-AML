@@ -21,11 +21,32 @@ services:
       - ./volume/kafka:/var/lib/kafka/data
       - ./volume/kafka-secrets:/etc/kafka/secrets
       - ./volume/kafka-config:/mnt/shared/config
+    depends_on:
+      kafka-storage-init:
+        condition: service_completed_successfully
     healthcheck:
       test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:29092 --list >/dev/null 2>&1"]
       interval: 5s
       timeout: 5s
       retries: 20
+
+  kafka-storage-init:
+    image: apache/kafka:4.0.1
+    user: "0:0"
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        kafka_uid=$$(id -u appuser)
+        kafka_gid=$$(id -g appuser)
+        for directory in /var/lib/kafka/data /etc/kafka/secrets /mnt/shared/config; do
+          if [ "$$(stat -c %u "$$directory")" != "$$kafka_uid" ]; then
+            chown -R "$$kafka_uid:$$kafka_gid" "$$directory"
+          fi
+        done
+    volumes:
+      - ./volume/kafka:/var/lib/kafka/data
+      - ./volume/kafka-secrets:/etc/kafka/secrets
+      - ./volume/kafka-config:/mnt/shared/config
 
   postgres:
     image: postgres:17-alpine

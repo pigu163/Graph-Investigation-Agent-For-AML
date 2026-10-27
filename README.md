@@ -16,6 +16,8 @@ docker compose up -d kafka-ui
 
 Compose starts Kafka first and waits for it to become healthy before starting Kafka UI. Open [http://localhost:8080](http://localhost:8080). Select **Topics → `aml-transactions` → Messages** to inspect records.
 
+Before Kafka starts, the one-shot `kafka-storage-init` service assigns its three storage/configuration bind mounts to the image's `appuser`. This also runs when starting after a full storage reset, so root-owned directories on Linux are writable without running the broker as root. Check fresh and recreated storage with `python scripts/check_kafka_storage.py`; this uses isolated Docker volumes and does not access project data.
+
 PostgreSQL is available on `localhost:5432` with database `aml_db`, user `aml_user`, and local development password `aml_local_dev`. For example, connect from the host with `psql -h localhost -p 5432 -U aml_user -d aml_db`.
 
 ### Save Kafka transactions to PostgreSQL
