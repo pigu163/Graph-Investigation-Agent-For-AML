@@ -1,5 +1,35 @@
 # Graph Investigation Agent for AML
 
+## Web frontend foundation
+
+The separate [`frontend/`](frontend/README.md) configures Next.js, React,
+TypeScript, Tailwind CSS, shadcn/ui, Framer Motion, Recharts, and Sigma.js +
+Graphology. It includes an Apple-inspired glass shell, five route placeholders,
+accessibility preferences, and an opt-in synthetic graph preview. It is not yet
+connected to FastAPI, an Agent, or MLflow; no live metrics are claimed.
+See the frontend README for Node 22 setup and local development commands.
+
+The frontend is also included in Docker Compose. Start the complete existing
+stack (frontend, Kafka, PostgreSQL, Raw Writer, Kafka UI and Flink cluster):
+
+```bash
+docker compose up -d --build --wait
+```
+
+Open the frontend at [http://localhost:3000](http://localhost:3000), Kafka UI at
+[http://localhost:8080](http://localhost:8080), and Flink UI at
+[http://localhost:8081](http://localhost:8081). To run only the frontend, use
+`docker compose up -d --build --wait frontend`. Producer and Flink Submit are
+on-demand commands in the same Compose file, not automatic background jobs.
+Starting the stack does not replay data or submit a Flink job.
+
+```bash
+docker compose down
+```
+
+This stops/removes this project's containers and network while preserving
+`volume/` data and built images.
+
 ## Replay IBM AML transactions to Kafka
 
 The local IBM AML Small archives and extracted CSV files belong in `dataset/`. They are ignored by Git and are not included in the Docker image.

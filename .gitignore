@@ -37,3 +37,10 @@ AGENTS.md
 # Jupyter and macOS
 .ipynb_checkpoints/
 .DS_Store
+
+# Frontend dependencies, generated output and local Node runtime.
+node_modules/
+.next/
+out/
+*.tsbuildinfo
+/frontend/.runtime/
