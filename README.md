@@ -4,7 +4,7 @@
 
 The local IBM AML Small archives and extracted CSV files belong in `dataset/`. They are ignored by Git and are not included in the Docker image.
 
-Kafka messages are stored under `volume/kafka/`, and PostgreSQL files under `volume/postgres/`. Kafka's empty auxiliary `secrets` and shared-config mount points are mapped to `volume/kafka-secrets/` and `volume/kafka-config/`. These folders are ignored by Git. Kafka UI has no persistent data of its own. See the development reset instructions below to clear transactions or completely rebuild local storage.
+Kafka messages are stored under `volume/kafka/`, and PostgreSQL files under `volume/postgres/`. Kafka's empty auxiliary `secrets` and shared-config mount points are mapped to `volume/kafka-secrets/` and `volume/kafka-config/`. These folders are ignored by Git. Flink checkpoints live under `volume/flink/`. Kafka UI has no persistent data of its own. See the development reset instructions below to clear transactions or completely rebuild local storage.
 
 ### Start Kafka and Kafka UI
 
@@ -79,7 +79,88 @@ docker compose run --rm producer \
   --rate 1000
 ```
 
-The producer preserves the CSV row order and source event timestamp. The dataset rows are not sorted chronologically, so event times can move backwards during replay.
+By default, the producer preserves the CSV row order and source event timestamp. The dataset rows are not sorted chronologically, so event times can move backwards during replay. Use `--sort-event-time` for ordered live Flink replay as described below.
+
+## Flink account features and Web UI
+
+Flink runs as two permanent services: `flink-jobmanager` (coordination and Web UI) and `flink-taskmanager` (computation). The temporary `flink-submit` service submits SQL and exits. This version pins Flink 1.20.3, Kafka/JDBC connectors 3.3.0-1.20, and PostgreSQL JDBC driver 42.7.5.
+
+### Start the cluster and submit a live job
+
+```bash
+docker compose up -d --build --wait flink-jobmanager flink-taskmanager raw-writer kafka-ui
+
+docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -U aml_user -d aml_db < flink/schema.sql
+
+docker compose run --rm flink-submit
+```
+
+Open [Flink Web UI](http://localhost:8081). Under **Running Jobs**, select `aml-account-features-v1` to inspect its operators, records, watermarks and checkpoints. **Task Managers** shows the worker. Kafka UI remains at [http://localhost:8080](http://localhost:8080). A successful cluster startup alone does not submit a job; check that exactly one feature job is running. Cancel an existing job in the UI before submitting another.
+
+The job reads `aml-transactions` independently of Raw Writer, deduplicates transactions inside one-hour event-time windows, and upserts these features into `account_window_features`:
+
+- Incoming/outgoing transaction counts and amounts; net inflow.
+- Distinct external senders (Fan-in) and receivers (Fan-out).
+- Separate results for each source dataset, bank/account, currency and hour; version `hourly-v1`.
+
+Self-transfers contribute to incoming/outgoing counts and amounts, but not external counterparties. Incoming amounts use the receiving currency; outgoing amounts use the payment currency. Inputs use DECIMAL(28,8), outputs DECIMAL(38,8), suitable for the tested IBM data; this is a defined numeric range, not arbitrary-precision arithmetic. The evaluation label is not a detection feature.
+
+For live replay, sort the selected CSV prefix by event time:
+
+```bash
+docker compose run --rm producer \
+  --file /dataset/LI-Small/LI-Small_Trans.csv \
+  --bootstrap-servers kafka:29092 --sort-event-time --rate 500 --limit 5000
+```
+
+`--limit` selects the first N original rows, then `--sort-event-time` sorts those rows while preserving their original transaction IDs. Full-file sorting uses temporary SQLite disk storage inside the producer container. It must finish before sending begins; a full replay requires temporary disk space. Same-minute order does not establish a real chronological order within that minute.
+
+### Event time and replay limits
+
+Windows use the dataset's timezone-free event timestamp, not today's ingestion time. A one-minute watermark closes hourly windows after event time advances past their end. Final results are emitted when windows close, not for every transaction. The first 5,000 IBM rows span only part of an hour, so a short live replay may correctly produce no closed-window output yet.
+
+Live mode assumes approximately ordered input. Events arriving after their window has closed are dropped from feature computation, although Raw Writer still archives them. This version does not automatically correct closed windows for very late data; inspect Flink's late-record metrics and use a controlled bounded rebuild when needed. Replaying an older dataset into an already advanced live job is not a valid way to merge histories.
+
+Checkpointing runs every 10 seconds, using the shared project bind mount `volume/flink/`. TaskManager failure can recover through the running JobManager and checkpoints. This session cluster does not configure JobManager high availability: after a full cluster restart, manually submit a new job, which reads Kafka from the earliest retained offset. Rebuilding unordered history requires the bounded mode below; live replay must respect the watermark assumptions. Incomplete Kafka retention cannot rebuild complete history. No end-to-end exactly-once claim is made.
+
+### Verify IBM HI-Small and LI-Small samples
+
+Use an empty development environment and no active producers/live Flink jobs. The bounded mode below captures Kafka's end offsets and uses **batch execution** over that finite snapshot; it handles the unordered combination of historical datasets and closes the final window without fake transactions. Continuous monitoring uses streaming execution instead.
+
+```bash
+docker compose run --rm producer \
+  --file /dataset/HI-Small/HI-Small_Trans.csv \
+  --bootstrap-servers kafka:29092 --sort-event-time --rate 500 --limit 5000
+
+docker compose run --rm producer \
+  --file /dataset/LI-Small/LI-Small_Trans.csv \
+  --bootstrap-servers kafka:29092 --sort-event-time --rate 500 --limit 5000
+
+docker compose run --rm flink-submit latest-offset
+```
+
+Wait for the job to be **FINISHED** in Flink UI and for Raw Writer to catch up. Use its consumer lag or the SQL count to check progress. Then compare every output key and feature value with both the original CSV and independent PostgreSQL aggregation:
+
+```bash
+PGHOST=localhost PGDATABASE=aml_db PGUSER=aml_user PGPASSWORD=aml_local_dev \
+  uv run --extra streaming python scripts/check_flink.py \
+  dataset/HI-Small/HI-Small_Trans.csv --limit 5000
+
+PGHOST=localhost PGDATABASE=aml_db PGUSER=aml_user PGPASSWORD=aml_local_dev \
+  uv run --extra streaming python scripts/check_flink.py \
+  dataset/LI-Small/LI-Small_Trans.csv --limit 5000
+
+docker compose exec postgres psql -U aml_user -d aml_db \
+  -c "SELECT source_dataset, count(*) FROM account_window_features GROUP BY source_dataset;"
+```
+
+Appending duplicate messages before a bounded scan should not change either unique transactions or computed features. Rerunning the same bounded job should upsert the same results. These commands test samples, not all millions of records.
+
+Local validation on 2026-10-27 checked 5,000 source transactions per IBM dataset: HI-Small produced 4,190 account/currency/hour rows, LI-Small 4,316. Every feature matched both the source-CSV reference calculation and PostgreSQL recomputation, and all original transaction fields were checked separately. The input included another 500 duplicate messages per dataset. These are functional sample checks, not a full-dataset evaluation or throughput benchmark.
+
+Repeating the bounded job preserved all results. The live boundary fixture produced eight finalized account/currency/hour rows, retained correct results after TaskManager checkpoint recovery, and produced ten rows including the final window in bounded mode.
+
+The small `tests/fixtures/streaming-boundaries.csv` additionally covers hour boundaries, repeated counterparties, self-transfers, different receiving/payment currencies, and eight decimal places. It can be replayed through `/fixtures/streaming-boundaries.csv`; `scripts/check_flink.py tests/fixtures/streaming-boundaries.csv --closed-only` checks only finalized windows of a live job. Producer ordering checks run with `uv run --extra streaming python -m unittest discover -s tests`.
 
 ### Stop the services
 
@@ -87,87 +168,46 @@ The producer preserves the CSV row order and source event timestamp. The dataset
 docker compose down
 ```
 
-This stops Kafka, Kafka UI, PostgreSQL, and Raw Writer. Their data remains in the matching folders under `volume/`.
+This stops Kafka, both UIs, PostgreSQL, Raw Writer and the Flink cluster. Their data remains in the matching folders under `volume/`.
 
 ## Reset data during development
 
 Run these commands from the repository root. Both reset options delete stored data. The original files under `dataset/` and the project source code are preserved. Choose one option; clearing test transactions normally does not require deleting `volume/`.
 
-### Clear transactions and consumer progress (usual reset)
+### Clear transactions, features and computation progress (usual reset)
 
-This removes the messages in `aml-transactions`, resets Raw Writer's Kafka progress, and clears the SQL transaction rows. The PostgreSQL database, table structure, and local storage folders remain.
-
-First stop any running Producer (press **Ctrl+C** in its terminal), then stop Raw Writer so it cannot write old messages back into PostgreSQL:
+Stop any running Producer first (Ctrl+C in its terminal), then run:
 
 ```bash
-docker compose stop raw-writer
-docker compose up -d --wait kafka postgres
+python scripts/reset_streaming.py --yes
 ```
 
-List consumer groups. If `aml-raw-writer-v1` appears, delete it using the second command. If it is absent, skip the delete command: a new group that has not committed any messages may not exist yet.
+This explicitly deletes this project's test data. It stops Raw Writer and Flink first, deletes the `aml-raw-writer-v1` and `aml-flink-features-v1` consumer groups if present, deletes the known AML topics, truncates `transactions` and `account_window_features`, and removes files under `volume/flink/`. It recreates an empty transaction topic and restarts services. PostgreSQL table structures, CSV files, code and configuration remain.
+
+The script verifies both SQL tables are empty and Kafka's earliest/latest offsets are zero. Flink containers are recreated so previous test job history is cleared. Flink UI stays available with **no submitted job**; run `docker compose run --rm flink-submit` when ready to resume monitoring.
+
+Do not truncate only the feature table while leaving a live Flink job or its old checkpoint state running: those components can restore old results. Reset all relevant progress together.
 
 ```bash
-docker compose exec kafka /opt/kafka/bin/kafka-consumer-groups.sh \
-  --bootstrap-server localhost:29092 --list
-
-docker compose exec kafka /opt/kafka/bin/kafka-consumer-groups.sh \
-  --bootstrap-server localhost:29092 --delete --group aml-raw-writer-v1
-```
-
-Delete the transaction topic and clear the SQL table:
-
-```bash
-docker compose exec kafka /opt/kafka/bin/kafka-topics.sh \
-  --bootstrap-server localhost:29092 --delete --if-exists --topic aml-transactions
-
-docker compose exec postgres psql -v ON_ERROR_STOP=1 -U aml_user -d aml_db \
-  -c "TRUNCATE TABLE transactions;"
-```
-
-Kafka topic deletion is asynchronous. Run the following command and wait until `aml-transactions` is no longer listed before recreating it:
-
-```bash
-docker compose exec kafka /opt/kafka/bin/kafka-topics.sh \
-  --bootstrap-server localhost:29092 --list
-```
-
-Create a fresh topic, then restart Raw Writer and Kafka UI:
-
-```bash
-docker compose exec kafka /opt/kafka/bin/kafka-topics.sh \
-  --bootstrap-server localhost:29092 --create --topic aml-transactions \
-  --partitions 1 --replication-factor 1
-
-docker compose up -d raw-writer kafka-ui
-```
-
-Before running Producer again, verify that Kafka's earliest and latest offsets are both `0`, and that the SQL count is `0`:
-
-```bash
-docker compose exec kafka /opt/kafka/bin/kafka-get-offsets.sh \
-  --bootstrap-server localhost:29092 --topic aml-transactions --time -2
+docker compose exec postgres psql -U aml_user -d aml_db \
+  -c "SELECT (SELECT count(*) FROM transactions) AS transactions, (SELECT count(*) FROM account_window_features) AS features;"
 
 docker compose exec kafka /opt/kafka/bin/kafka-get-offsets.sh \
   --bootstrap-server localhost:29092 --topic aml-transactions --time -1
-
-docker compose exec postgres psql -U aml_user -d aml_db \
-  -c "SELECT count(*) FROM transactions;"
 ```
-
-Clearing only PostgreSQL does not reset Kafka messages or consumer progress. To rebuild SQL rows from existing Kafka messages instead, stop Raw Writer, truncate the table, delete its consumer group, and restart Raw Writer without deleting the topic.
 
 ### Completely rebuild local storage
 
-Use this option to start Kafka and PostgreSQL from their initial state. It deletes all local Kafka topics and consumer progress, and all PostgreSQL databases, tables, and custom database users stored by this project. PostgreSQL recreates the database and credentials configured in Compose at the next startup.
+Use this option to start Kafka, PostgreSQL and Flink from their initial state. It deletes all local Kafka topics and consumer progress, and all PostgreSQL databases, tables, and custom database users stored by this project. PostgreSQL recreates the database and credentials configured in Compose at the next startup.
 
 Stop any running Producer, then stop and remove the project's containers before deleting their data folders:
 
 ```bash
 docker compose down
 
-rm -rf -- ./volume/kafka ./volume/postgres ./volume/kafka-secrets ./volume/kafka-config
+rm -rf -- ./volume/kafka ./volume/postgres ./volume/kafka-secrets ./volume/kafka-config ./volume/flink
 
-mkdir -p ./volume/kafka ./volume/postgres ./volume/kafka-secrets ./volume/kafka-config
+mkdir -p ./volume/kafka ./volume/postgres ./volume/kafka-secrets ./volume/kafka-config ./volume/flink
 
 docker compose up -d --wait kafka postgres
 ```
@@ -179,8 +219,9 @@ docker compose exec kafka /opt/kafka/bin/kafka-topics.sh \
   --bootstrap-server localhost:29092 --create --topic aml-transactions \
   --partitions 1 --replication-factor 1
 
-docker compose up -d --build raw-writer kafka-ui
+docker compose up -d --build --wait raw-writer kafka-ui flink-jobmanager flink-taskmanager
+docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -U aml_user -d aml_db < flink/schema.sql
 docker compose logs --tail 20 raw-writer
 ```
 
-Once the writer logs `Reading aml-transactions into PostgreSQL transactions`, use the offset and SQL count checks above to verify the empty state. `docker compose down -v` does not remove these host bind-mount folders; deleting their contents explicitly is what resets local storage.
+Once the writer logs `Reading aml-transactions into PostgreSQL transactions`, use the offset and SQL count checks above to verify the empty state. Submit a Flink job separately when needed. `docker compose down -v` does not remove these host bind-mount folders; deleting their contents explicitly is what resets local storage.

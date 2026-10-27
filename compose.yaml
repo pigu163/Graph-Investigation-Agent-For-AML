@@ -52,6 +52,7 @@ services:
         condition: service_healthy
     volumes:
       - ./dataset:/dataset:ro
+      - ./tests/fixtures:/fixtures:ro
 
   raw-writer:
     build: .
@@ -80,4 +81,64 @@ services:
       KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092
     depends_on:
       kafka:
+        condition: service_healthy
+
+  flink-jobmanager:
+    build:
+      context: .
+      dockerfile: flink/Dockerfile
+    image: aml-flink:local
+    command: jobmanager
+    ports:
+      - "127.0.0.1:8081:8081"
+    environment:
+      FLINK_PROPERTIES: |
+        jobmanager.rpc.address: flink-jobmanager
+        rest.address: flink-jobmanager
+        rest.bind-address: 0.0.0.0
+        jobmanager.memory.process.size: 768m
+        taskmanager.memory.process.size: 1024m
+        taskmanager.numberOfTaskSlots: 2
+        parallelism.default: 1
+    volumes:
+      - ./volume/flink:/opt/flink/state
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8081/overview >/dev/null"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  flink-taskmanager:
+    image: aml-flink:local
+    command: taskmanager
+    environment:
+      FLINK_PROPERTIES: |
+        jobmanager.rpc.address: flink-jobmanager
+        taskmanager.memory.process.size: 1024m
+        taskmanager.numberOfTaskSlots: 2
+        parallelism.default: 1
+    volumes:
+      - ./volume/flink:/opt/flink/state
+    depends_on:
+      flink-jobmanager:
+        condition: service_healthy
+
+  flink-submit:
+    image: aml-flink:local
+    profiles: [etl]
+    entrypoint: ["/docker-entrypoint.sh", "bash", "/opt/flink/aml/submit.sh"]
+    environment:
+      FLINK_PROPERTIES: |
+        jobmanager.rpc.address: flink-jobmanager
+        rest.address: flink-jobmanager
+    volumes:
+      - ./volume/flink:/opt/flink/state
+    depends_on:
+      flink-jobmanager:
+        condition: service_healthy
+      flink-taskmanager:
+        condition: service_started
+      kafka:
+        condition: service_healthy
+      postgres:
         condition: service_healthy
