@@ -1,5 +1,11 @@
 # Graph Investigation Agent for AML
 
+## Target architecture
+
+[![Target architecture: transaction sources flow through Kafka and Flink into PostgreSQL and alert-triggered investigations, while offline data and user requests support on-demand investigations. The agent selects SQL, graph and ML tools to produce evidence and reports for the web application.](image/aml-investigation-architecture.png)](image/aml-investigation-architecture.png)
+
+This diagram shows the **target architecture**, including planned Agent, alert dispatch, FastAPI, AMLGraphX integration and MLflow capabilities. The current repository provides the streaming and persistence pipeline and a frontend foundation; see the sections below for their present scope. On-demand investigation is designed to work with offline data without Kafka or Flink.
+
 ## Web frontend foundation
 
 The separate [`frontend/`](frontend/README.md) configures Next.js, React,
