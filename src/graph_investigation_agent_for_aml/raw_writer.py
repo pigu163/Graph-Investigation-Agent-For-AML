@@ -24,6 +24,10 @@ from psycopg.types.json import Jsonb
 CREATE_TABLE = """
 CREATE TABLE IF NOT EXISTS transactions (
     transaction_id TEXT PRIMARY KEY,
+    source_dataset TEXT,
+    source_file TEXT,
+    source_row BIGINT,
+    event_time_kind TEXT,
     event_time TIMESTAMP NOT NULL,
     source_bank TEXT NOT NULL,
     source_account TEXT NOT NULL,
@@ -44,6 +48,14 @@ CREATE TABLE IF NOT EXISTS transactions (
 )
 """
 
+# Existing rows keep their original JSON; new messages fill these columns.
+ADD_SOURCE_COLUMNS = """
+ALTER TABLE transactions ADD COLUMN IF NOT EXISTS source_dataset TEXT;
+ALTER TABLE transactions ADD COLUMN IF NOT EXISTS source_file TEXT;
+ALTER TABLE transactions ADD COLUMN IF NOT EXISTS source_row BIGINT;
+ALTER TABLE transactions ADD COLUMN IF NOT EXISTS event_time_kind TEXT;
+"""
+
 # Fixed, parameterized SQL keeps event values separate from SQL instructions.
 # Duplicate replays keep the first stored record and its original provenance.
 INSERT_TRANSACTION = """
@@ -52,13 +64,14 @@ INSERT INTO transactions (
     destination_bank, destination_account, amount_received,
     receiving_currency, amount_paid, payment_currency, payment_format,
     is_laundering, ingested_at, kafka_topic, kafka_partition, kafka_offset,
-    raw_event
+    raw_event, source_dataset, source_file, source_row, event_time_kind
 ) VALUES (
     %(transaction_id)s, %(event_time)s, %(source_bank)s, %(source_account)s,
     %(destination_bank)s, %(destination_account)s, %(amount_received)s,
     %(receiving_currency)s, %(amount_paid)s, %(payment_currency)s,
     %(payment_format)s, %(is_laundering)s, %(ingested_at)s,
-    %(kafka_topic)s, %(kafka_partition)s, %(kafka_offset)s, %(raw_event)s
+    %(kafka_topic)s, %(kafka_partition)s, %(kafka_offset)s, %(raw_event)s,
+    %(source_dataset)s, %(source_file)s, %(source_row)s, %(event_time_kind)s
 )
 ON CONFLICT (transaction_id) DO NOTHING
 """
@@ -70,10 +83,17 @@ def transaction_values(event: dict) -> dict:
     for name in (
         "transaction_id", "source_bank", "source_account", "destination_bank",
         "destination_account", "receiving_currency", "payment_currency",
-        "payment_format",
+        "payment_format", "source_dataset", "source_file",
     ):
         if not isinstance(event[name], str) or not event[name].strip():
             raise ValueError(f"{name} must be a nonempty string")
+
+    if type(event["source_row"]) is not int or event["source_row"] < 1:
+        raise ValueError("source_row must be a positive integer")
+    if event["transaction_id"] != f"{event['source_dataset']}:{event['source_row']}":
+        raise ValueError("transaction_id must match source_dataset and source_row")
+    if event["event_time_kind"] != "local_unknown_timezone":
+        raise ValueError("IBM event_time_kind must be local_unknown_timezone")
 
     for name in ("amount_received", "amount_paid"):
         # Decimal preserves the exact amount instead of using binary floats.
@@ -119,6 +139,7 @@ def main() -> None:
         # Psycopg reads PGHOST, PGDATABASE, PGUSER and PGPASSWORD from the environment.
         with psycopg.connect(autocommit=True, connect_timeout=10) as connection:
             connection.execute(CREATE_TABLE)
+            connection.execute(ADD_SOURCE_COLUMNS)
             consumer.subscribe([topic])
             logging.info("Reading %s into PostgreSQL transactions", topic)
             while running:

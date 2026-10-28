@@ -59,7 +59,7 @@ def main():
         assert reference, "Sample does not advance event time enough to close a window"
     with psycopg.connect(connect_timeout=10) as connection:
         ids = {r[0] for r in connection.execute(
-            "SELECT transaction_id FROM transactions WHERE split_part(transaction_id, ':', 1) = %s",
+            "SELECT transaction_id FROM transactions WHERE source_dataset = %s",
             (args.file.stem,),
         )}
         assert ids == {f"{args.file.stem}:{i}" for i in range(1, len(sample) + 1)}, "Raw transaction IDs differ"
@@ -80,21 +80,21 @@ def main():
         # A second, independent SQL aggregation checks the persisted business data.
         sql_rows = connection.execute("""
             WITH movements AS (
-                SELECT split_part(transaction_id, ':', 1) AS dataset,
+                SELECT source_dataset AS dataset,
                        source_bank AS bank, source_account AS account, payment_currency AS currency,
                        date_trunc('hour', event_time) AS start,
                        0::bigint AS inc, 1::bigint AS outc, 0::numeric AS ina, amount_paid AS outa,
                        NULL::text AS sender,
                        CASE WHEN (source_bank, source_account) <> (destination_bank, destination_account)
                             THEN destination_bank || ':' || destination_account END AS receiver
-                FROM transactions WHERE split_part(transaction_id, ':', 1) = %s
+                FROM transactions WHERE source_dataset = %s
                 UNION ALL
-                SELECT split_part(transaction_id, ':', 1), destination_bank, destination_account,
+                SELECT source_dataset, destination_bank, destination_account,
                        receiving_currency, date_trunc('hour', event_time),
                        1::bigint, 0::bigint, amount_received, 0::numeric,
                        CASE WHEN (source_bank, source_account) <> (destination_bank, destination_account)
                             THEN source_bank || ':' || source_account END, NULL::text
-                FROM transactions WHERE split_part(transaction_id, ':', 1) = %s
+                FROM transactions WHERE source_dataset = %s
             )
             SELECT dataset, bank, account, currency, start, start + interval '1 hour',
                    sum(inc), sum(outc), sum(ina), sum(outa), sum(ina) - sum(outa),
