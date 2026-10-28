@@ -41,6 +41,8 @@ This stops and keeps this project's containers, preserving `volume/` data and bu
 
 The local IBM AML Small archives and extracted CSV files belong in `dataset/`. They are ignored by Git and are not included in the Docker image.
 
+Current development uses IBM AML for transaction replay, basic Flink features and PostgreSQL persistence. Cross-source schema migration and PaySim integration are deferred.
+
 Kafka messages are stored under `volume/kafka/`, and PostgreSQL files under `volume/postgres/`. Kafka's empty auxiliary `secrets` and shared-config mount points are mapped to `volume/kafka-secrets/` and `volume/kafka-config/`. These folders are ignored by Git. Flink checkpoints live under `volume/flink/`. Kafka UI has no persistent data of its own. See the development reset instructions below to clear transactions or completely rebuild local storage.
 
 ### Start Kafka and Kafka UI
