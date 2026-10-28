@@ -7,6 +7,7 @@ SET 'execution.checkpointing.dir' = 'file:///opt/flink/state/checkpoints';
 
 CREATE TABLE kafka_transactions (
     transaction_id STRING,
+    source_dataset STRING,
     event_time STRING,
     source_bank STRING,
     source_account STRING,
@@ -44,7 +45,7 @@ SELECT * FROM (
 -- One transaction contributes an outgoing and an incoming account observation.
 -- window_time preserves event time across the first windowed operation.
 CREATE VIEW account_movements AS
-SELECT SPLIT_INDEX(transaction_id, ':', 0) AS source_dataset,
+SELECT source_dataset,
        source_bank AS bank_id, source_account AS account_id,
        payment_currency AS currency, window_time AS movement_time,
        CAST(0 AS BIGINT) AS in_count, CAST(1 AS BIGINT) AS out_count,
@@ -54,7 +55,7 @@ SELECT SPLIT_INDEX(transaction_id, ':', 0) AS source_dataset,
             THEN CONCAT(destination_bank, ':', destination_account) END AS receiver
 FROM unique_transactions
 UNION ALL
-SELECT SPLIT_INDEX(transaction_id, ':', 0), destination_bank, destination_account,
+SELECT source_dataset, destination_bank, destination_account,
        receiving_currency, window_time,
        CAST(1 AS BIGINT), CAST(0 AS BIGINT),
        amount_received, CAST(0 AS DECIMAL(28, 8)),

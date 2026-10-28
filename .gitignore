@@ -27,6 +27,8 @@ dataset/
 
 # Local papers and research notes.
 /paper/
+/todolist/
+/docs/
 
 # Local Kafka and PostgreSQL data files.
 volume/

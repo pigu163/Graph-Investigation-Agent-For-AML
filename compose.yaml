@@ -77,13 +77,22 @@ services:
       timeout: 5s
       retries: 20
 
+  kafka-topic-init:
+    image: apache/kafka:4.0.1
+    entrypoint: ["/opt/kafka/bin/kafka-topics.sh"]
+    command: ["--bootstrap-server", "kafka:29092", "--create", "--if-not-exists",
+              "--topic", "aml-transactions", "--partitions", "1", "--replication-factor", "1"]
+    depends_on:
+      kafka:
+        condition: service_healthy
+
   producer:
     build: .
     image: aml-python:local
     profiles: [etl]
     depends_on:
-      kafka:
-        condition: service_healthy
+      kafka-topic-init:
+        condition: service_completed_successfully
     volumes:
       - ./dataset:/dataset:ro
       - ./tests/fixtures:/fixtures:ro
@@ -101,8 +110,8 @@ services:
       PGUSER: aml_user
       PGPASSWORD: aml_local_dev
     depends_on:
-      kafka:
-        condition: service_healthy
+      kafka-topic-init:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
 
@@ -190,7 +199,7 @@ services:
         condition: service_healthy
       flink-taskmanager:
         condition: service_started
-      kafka:
-        condition: service_healthy
+      kafka-topic-init:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy

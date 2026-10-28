@@ -1,5 +1,7 @@
 # Graph Investigation Agent for AML
 
+Current development uses IBM AML for transaction replay, basic Flink features and PostgreSQL persistence. Cross-source schema migration and PaySim integration are deferred.
+
 ## Target architecture
 
 [![Target architecture: transaction sources flow through Kafka and Flink into PostgreSQL and alert-triggered investigations, while offline data and user requests support on-demand investigations. The agent selects SQL, graph and ML tools to produce evidence and reports for the web application.](image/aml-investigation-architecture.png)](image/aml-investigation-architecture.png)
@@ -30,11 +32,10 @@ on-demand commands in the same Compose file, not automatic background jobs.
 Starting the stack does not replay data or submit a Flink job.
 
 ```bash
-docker compose down
+docker compose stop
 ```
 
-This stops/removes this project's containers and network while preserving
-`volume/` data and built images.
+This stops and keeps this project's containers, preserving `volume/` data and built images.
 
 ## Replay IBM AML transactions to Kafka
 
@@ -50,7 +51,7 @@ Make sure Docker Desktop is running, then start Kafka and its browser UI from th
 docker compose up -d kafka-ui
 ```
 
-Compose starts Kafka first and waits for it to become healthy before starting Kafka UI. Open [http://localhost:8080](http://localhost:8080). Select **Topics → `aml-transactions` → Messages** to inspect records.
+Compose starts Kafka first and waits for it to become healthy before starting Kafka UI. Starting Producer or Raw Writer also runs `kafka-topic-init`, which creates `aml-transactions` if needed before the consumer starts. Open [http://localhost:8080](http://localhost:8080). Select **Topics → `aml-transactions` → Messages** to inspect records.
 
 Before Kafka starts, the one-shot `kafka-storage-init` service assigns its three storage/configuration bind mounts to the image's `appuser`. This also runs when starting after a full storage reset, so root-owned directories on Linux are writable without running the broker as root. Check fresh and recreated storage with `python scripts/check_kafka_storage.py`; this uses isolated Docker volumes and does not access project data.
 
@@ -68,6 +69,14 @@ docker compose logs -f raw-writer
 Raw Writer creates the `transactions` table on startup, including when PostgreSQL was already initialized. A new consumer group reads existing messages from the beginning; later starts resume from its committed Kafka offsets. Producer and Raw Writer share the same Python Docker image but run different Python modules.
 
 The table stores transaction fields, exact numeric amounts, the original JSON, and the Kafka topic/partition/offset of the first saved message. Source event timestamps have no timezone in this dataset and are stored without inventing one. `is_laundering` is the dataset's evaluation label.
+
+IBM messages also carry `source_dataset`, `source_file`, `source_row`, and
+`event_time_kind=local_unknown_timezone`. Raw Writer saves and validates these
+fields; Flink reads the dataset directly rather than extracting it from the ID.
+The producer checks the IBM header order to distinguish the two `Account` columns.
+Before upgrading from old messages without these fields, clear development data
+with the reset command below and replay with the updated producer. Existing SQL
+tables receive nullable metadata columns; old rows are preserved until reset.
 
 Each database insert is committed before acknowledging the Kafka message. Repeated transaction IDs keep the first stored row. This permits safe replay after a crash between the two commits; it does not claim end-to-end exactly-once delivery. Invalid messages or failed writes stop the writer without acknowledging that message. Inspect its logs, correct the problem, then restart it with `docker compose up -d raw-writer`.
 
@@ -198,6 +207,13 @@ Appending duplicate messages before a bounded scan should not change either uniq
 
 Local validation on 2026-10-27 checked 5,000 source transactions per IBM dataset: HI-Small produced 4,190 account/currency/hour rows, LI-Small 4,316. Every feature matched both the source-CSV reference calculation and PostgreSQL recomputation, and all original transaction fields were checked separately. The input included another 500 duplicate messages per dataset. These are functional sample checks, not a full-dataset evaluation or throughput benchmark.
 
+Validation on 2026-10-28 repeated those sample sizes with the explicit IBM source
+metadata. Both original fields and source metadata matched the CSV records; all
+4,190 HI-Small and 4,316 LI-Small windows matched CSV and SQL recomputation.
+Raw Writer processed 11,000 messages and stored 10,000 unique transactions,
+including the 500 duplicate deliveries per dataset. Five local unit tests cover
+IBM column order, replay ordering, mapping, identity and time validation.
+
 Repeating the bounded job preserved all results. The live boundary fixture produced eight finalized account/currency/hour rows, retained correct results after TaskManager checkpoint recovery, and produced ten rows including the final window in bounded mode.
 
 The small `tests/fixtures/streaming-boundaries.csv` additionally covers hour boundaries, repeated counterparties, self-transfers, different receiving/payment currencies, and eight decimal places. It can be replayed through `/fixtures/streaming-boundaries.csv`; `scripts/check_flink.py tests/fixtures/streaming-boundaries.csv --closed-only` checks only finalized windows of a live job. Producer ordering checks run with `uv run --extra streaming python -m unittest discover -s tests`.
@@ -205,10 +221,10 @@ The small `tests/fixtures/streaming-boundaries.csv` additionally covers hour bou
 ### Stop the services
 
 ```bash
-docker compose down
+docker compose stop
 ```
 
-This stops Kafka, both UIs, PostgreSQL, Raw Writer and the Flink cluster. Their data remains in the matching folders under `volume/`.
+This stops and keeps the containers. Their data remains in the matching folders under `volume/`. Use `docker compose start` to restart existing containers; use `up -d --build` after code or configuration changes.
 
 ## Reset data during development
 
@@ -224,7 +240,17 @@ python scripts/reset_streaming.py --yes
 
 This explicitly deletes this project's test data. It stops Raw Writer and Flink first, deletes the `aml-raw-writer-v1` and `aml-flink-features-v1` consumer groups if present, deletes the known AML topics, truncates `transactions` and `account_window_features`, and removes files under `volume/flink/`. It recreates an empty transaction topic and restarts services. PostgreSQL table structures, CSV files, code and configuration remain.
 
-The script verifies both SQL tables are empty and Kafka's earliest/latest offsets are zero. Flink containers are recreated so previous test job history is cleared. Flink UI stays available with **no submitted job**; run `docker compose run --rm flink-submit` when ready to resume monitoring.
+The script verifies both SQL tables are empty and Kafka's earliest/latest offsets are zero. It restarts the existing Flink containers with cleared state and no submitted job; run `docker compose run --rm flink-submit` when ready to resume monitoring.
+
+To clear the same test data and finish with all service containers stopped and kept:
+
+```bash
+python scripts/reset_streaming.py --yes --stop
+```
+
+With `--stop`, the AML topics and consumer groups are removed and remain absent;
+the script does not recreate the transaction topic or restart consumers. Start
+again with `docker compose up -d --wait raw-writer` so the topic initializer runs.
 
 Do not truncate only the feature table while leaving a live Flink job or its old checkpoint state running: those components can restore old results. Reset all relevant progress together.
 
