@@ -5,7 +5,6 @@ Stop any producer first. This preserves datasets, code, configuration and SQL ta
 """
 
 import argparse
-import shutil
 import subprocess
 import time
 from pathlib import Path
@@ -59,14 +58,10 @@ def reset(stop=False):
             raise TimeoutError("Kafka topic deletion has not completed")
         time.sleep(1)
 
-    # Flink is stopped, so its local bind-mount state can now be removed.
-    state_directory = ROOT / "volume" / "flink"
-    state_directory.mkdir(parents=True, exist_ok=True)
-    for item in state_directory.iterdir():
-        if item.is_dir() and not item.is_symlink():
-            shutil.rmtree(item)
-        else:
-            item.unlink()
+    # Run as root inside the container because Flink may own checkpoint files.
+    compose("run", "--rm", "--no-deps", "--user", "0", "--entrypoint", "sh",
+            "flink-submit", "-c", "find /opt/flink/state -mindepth 1 -delete && "
+            "test -z \"$(find /opt/flink/state -mindepth 1 -print -quit)\"")
     sql((ROOT / "flink/schema.sql").read_text())
     tables = set(sql("SELECT tablename FROM pg_tables WHERE schemaname='public';").splitlines())
     existing_tables = [
@@ -78,7 +73,6 @@ def reset(stop=False):
     if stop:
         for table in existing_tables:
             assert sql("SELECT count(*) FROM " + table + ";") == "0"
-        assert not any(state_directory.iterdir()), "Flink state is not empty"
         assert not ({"aml-transactions", "aml-risk-alerts", "aml-feature-updates"}
                     & set(kafka("kafka-topics", "--list").splitlines()))
         assert not ({"aml-raw-writer-v1", "aml-flink-features-v1"}
