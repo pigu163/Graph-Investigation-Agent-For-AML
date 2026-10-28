@@ -34,7 +34,8 @@ def main() -> None:
                     """SELECT event_time, source_bank, source_account,
                         destination_bank, destination_account, amount_received,
                         receiving_currency, amount_paid, payment_currency,
-                        payment_format, is_laundering, raw_event
+                        payment_format, is_laundering, raw_event,
+                        source_dataset, source_file, source_row, event_time_kind
                     FROM transactions WHERE transaction_id = %s""",
                     (transaction_id,),
                 ).fetchone()
@@ -48,6 +49,12 @@ def main() -> None:
                 expected[10] = int(row[10])
                 assert stored[:11] == tuple(expected), f"Mismatch: {transaction_id}"
                 assert stored[11]["transaction_id"] == transaction_id
+                metadata = (args.file.stem, args.file.name, number, "local_unknown_timezone")
+                assert stored[12:] == metadata, f"Source metadata mismatch: {transaction_id}"
+                assert stored[11]["event_time"] == row[0]
+                assert stored[11]["source_dataset"] == args.file.stem
+                assert stored[11]["source_row"] == number
+                assert stored[0].tzinfo is None, "IBM event time must stay timezone-free"
                 checked += 1
     print(f"Verified {checked} stored transactions against {args.file}")
 

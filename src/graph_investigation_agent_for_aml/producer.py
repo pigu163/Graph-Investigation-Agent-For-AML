@@ -24,17 +24,26 @@ from pathlib import Path
 from confluent_kafka import KafkaError, Producer
 
 
+IBM_HEADER = [
+    "Timestamp", "From Bank", "Account", "To Bank", "Account",
+    "Amount Received", "Receiving Currency", "Amount Paid",
+    "Payment Currency", "Payment Format", "Is Laundering",
+]
+
+
 def read_rows(path: Path, limit: int | None, sort_event_time: bool):
     """Keep original row IDs even when replaying a selected prefix in time order."""
     def source_rows():
         with path.open(newline="", encoding="utf-8") as source:
             rows = csv.reader(source)
             header = next(rows, None)
-            if header is None or len(header) != 11:
-                raise ValueError("Expected an IBM AML transaction CSV with 11 columns")
+            # Both Account columns must stay beside their matching bank column.
+            if header != IBM_HEADER:
+                raise ValueError("Expected the IBM AML transaction header in its original order")
             for row_number, row in enumerate(rows, start=1):
                 if len(row) != 11:
                     raise ValueError(f"Unexpected column count at CSV row {row_number + 1}")
+                datetime.strptime(row[0], "%Y/%m/%d %H:%M")
                 yield row_number, row
                 if limit is not None and row_number >= limit:
                     break
@@ -56,6 +65,33 @@ def read_rows(path: Path, limit: int | None, sort_event_time: bool):
                 "SELECT source_row, payload FROM rows ORDER BY event_time, source_row"
             ):
                 yield number, json.loads(payload)
+
+
+def build_event(path: Path, row_number: int, row: list[str]) -> dict:
+    """Map one IBM row without changing account IDs, amounts or source time."""
+    return {
+        # IDs are stable for the same filename and original row order.
+        "transaction_id": f"{path.stem}:{row_number}",
+        "source_dataset": path.stem,
+        "source_file": path.name,
+        "source_row": row_number,
+        # IBM provides a local timestamp but does not specify its timezone.
+        "event_time": row[0],
+        "event_time_kind": "local_unknown_timezone",
+        "source_bank": row[1],
+        "source_account": row[2],
+        "destination_bank": row[3],
+        "destination_account": row[4],
+        # Decimal strings keep the exact source amounts.
+        "amount_received": row[5],
+        "receiving_currency": row[6],
+        "amount_paid": row[7],
+        "payment_currency": row[8],
+        "payment_format": row[9],
+        # This label is for evaluation, not a detection feature.
+        "is_laundering": int(row[10]),
+        "ingested_at": datetime.now(timezone.utc).isoformat(),
+    }
 
 
 def main() -> None:
@@ -89,25 +125,7 @@ def main() -> None:
         if delivered == 0:
             # Sorting may take time; start the rate clock only when rows are ready.
             next_send = time.monotonic()
-        event = {
-            # File name plus row number makes this ID repeatable across replays.
-            "transaction_id": f"{args.file.stem}:{row_number}",
-            # Keep source event time separate from the current ingestion time.
-            "event_time": row[0],
-            "source_bank": row[1],
-            "source_account": row[2],
-            "destination_bank": row[3],
-            "destination_account": row[4],
-            # Keep monetary values as strings to avoid floating-point rounding.
-            "amount_received": row[5],
-            "receiving_currency": row[6],
-            "amount_paid": row[7],
-            "payment_currency": row[8],
-            "payment_format": row[9],
-            # This is the dataset's reference label for later evaluation.
-            "is_laundering": int(row[10]),
-            "ingested_at": datetime.now(timezone.utc).isoformat(),
-        }
+        event = build_event(args.file, row_number, row)
         # Use the transaction ID as the Kafka key for consistent partitioning.
         producer.produce(
             args.topic,
