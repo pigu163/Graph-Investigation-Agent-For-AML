@@ -61,13 +61,13 @@ Kafka topic aml-transactions
     账户/币种维度的聚合
             │
             ▼
-   Flink JDBC Sink（TaskManager）
+   PostgreSQL JDBC 写入（TaskManager）
             │
             ▼
  PostgreSQL account_window_features
 ```
 
-运行 `docker compose run --rm flink-submit` 时，Submit 容器读取 `submit.sh`，默认使用持续的 `unbounded`/`streaming` 模式，将 `account_features.sql` 提交给 JobManager。JobManager 再把执行计划安排到 TaskManager，之后 Submit 容器可以退出，而计算任务继续运行。
+运行 `docker compose run --rm flink-submit` 时，Submit 容器通过 `submit.sh` 提交 Java DataStream 作业。JobManager 再把执行计划安排到 TaskManager，之后 Submit 容器可以退出，而计算任务继续运行。历史有界模式仍使用 `account_features.sql`。
 
 ## 两种提交模式
 
@@ -77,7 +77,7 @@ Kafka topic aml-transactions
 docker compose run --rm flink-submit
 ```
 
-作业会持续等待新的 Kafka 交易，适合实时监控和持续回放。在 UI 的 **Running Jobs** 中可以看到 `aml-account-features-v1`。
+作业会持续等待新的 Kafka 交易，适合实时监控和持续回放。在 UI 的 **Running Jobs** 中可以看到 `aml-account-features-v2`。
 
 ### 有界测试模式
 
@@ -91,13 +91,17 @@ docker compose run --rm flink-submit latest-offset
 
 ## 代码文件之间的关系
 
-### `Dockerfile`
+### `Dockerfile.datastream`
 
-基于官方 Flink 镜像创建 `aml-flink:local`，加入 Kafka SQL Connector、Flink JDBC Connector 和 PostgreSQL JDBC Driver，使 Flink 能读 Kafka、写 PostgreSQL。它还把本目录复制到镜像里的 `/opt/flink/aml`。
+基于官方 Flink 1.20.3 镜像编译 DataStream 作业，并加入 Kafka、JDBC 和 PostgreSQL 连接器；保留 SQL 历史有界模式所需文件。
+
+### `java/AmlStreamingJob.java`
+
+实时作业按交易 ID 保留首条业务事件，使用一分钟 watermark 和五分钟允许迟到；窗口结果可更新，过晚账户交易和冲突写入独立 PostgreSQL 表。去重状态随交易数增长；过晚数据不自动重建。
 
 ### `account_features.sql`
 
-这是 Flink 的计算定义，不是 PostgreSQL 查询脚本。它定义 Kafka 输入表、事件时间和 watermark、一小时窗口去重、账户收付款观察、窗口聚合，以及 PostgreSQL JDBC 输出。
+这是历史有界批处理的 Flink SQL 计算定义，不是实时 DataStream 作业或 PostgreSQL 查询脚本。
 
 ### `schema.sql`
 
@@ -110,7 +114,7 @@ docker compose exec -T postgres psql \
 
 ### `submit.sh`
 
-这是提交入口。它只负责选择运行模式、替换 SQL 占位符和调用 Flink SQL Client，不负责实现 AML 计算逻辑。
+这是提交入口：默认提交 DataStream 作业；`latest-offset` 模式替换 SQL 占位符并调用 Flink SQL Client。
 
 ## Kafka 和 PostgreSQL 地址
 

@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 
 from graph_investigation_agent_for_aml.producer import IBM_HEADER, build_event, read_rows
-from graph_investigation_agent_for_aml.raw_writer import transaction_values
+from graph_investigation_agent_for_aml.raw_writer import business_values, transaction_values
 
 
 SAMPLE = ["2022/09/01 00:08", "011", "A001", "012", "A002",
@@ -67,6 +67,17 @@ class ReplayOrderTest(unittest.TestCase):
                        {"event_time_kind": "offset"}, {"ingested_at": "2026-10-28T10:00:00"}):
             with self.subTest(change=change), self.assertRaises(ValueError):
                 transaction_values(event | change)
+
+    def test_duplicate_comparison_ignores_ingestion_time_but_detects_conflicts(self):
+        event = build_event(Path("LI-Small_Trans.csv"), 1, SAMPLE)
+        original = business_values(transaction_values(event))
+        replay = event | {"ingested_at": "2026-10-28T10:00:00+00:00",
+                          "amount_received": "12.340000010"}
+        self.assertEqual(original, business_values(transaction_values(replay)))
+        for change in ({"amount_received": "900"}, {"event_time": "2022/09/01 01:08"},
+                       {"destination_account": "A003"}):
+            with self.subTest(change=change):
+                self.assertNotEqual(original, business_values(transaction_values(event | change)))
 
 
 if __name__ == "__main__":

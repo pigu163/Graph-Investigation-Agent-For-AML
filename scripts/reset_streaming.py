@@ -44,7 +44,7 @@ def reset(stop=False):
     compose("stop", "raw-writer", "kafka-ui", "flink-taskmanager", "flink-jobmanager")
     compose("up", "-d", "--wait", "kafka", "postgres")
     groups = set(kafka("kafka-consumer-groups", "--list").splitlines())
-    for group in ("aml-raw-writer-v1", "aml-flink-features-v1"):
+    for group in ("aml-raw-writer-v1", "aml-flink-features-v1", "aml-flink-features-v2"):
         if group in groups:
             kafka("kafka-consumer-groups", "--delete", "--group", group)
 
@@ -65,7 +65,8 @@ def reset(stop=False):
     sql((ROOT / "flink/schema.sql").read_text())
     tables = set(sql("SELECT tablename FROM pg_tables WHERE schemaname='public';").splitlines())
     existing_tables = [
-        table for table in ("transactions", "account_window_features")
+        table for table in ("flink_transaction_conflicts", "late_transaction_movements",
+                            "transaction_conflicts", "transactions", "account_window_features")
         if table in tables
     ]
     if existing_tables:
@@ -75,7 +76,7 @@ def reset(stop=False):
             assert sql("SELECT count(*) FROM " + table + ";") == "0"
         assert not ({"aml-transactions", "aml-risk-alerts", "aml-feature-updates"}
                     & set(kafka("kafka-topics", "--list").splitlines()))
-        assert not ({"aml-raw-writer-v1", "aml-flink-features-v1"}
+        assert not ({"aml-raw-writer-v1", "aml-flink-features-v1", "aml-flink-features-v2"}
                     & set(kafka("kafka-consumer-groups", "--list").splitlines()))
         compose("stop")
         print("Reset verified: SQL test rows cleared; AML topics and consumer groups removed; "

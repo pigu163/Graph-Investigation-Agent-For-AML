@@ -56,6 +56,32 @@ ALTER TABLE transactions ADD COLUMN IF NOT EXISTS source_row BIGINT;
 ALTER TABLE transactions ADD COLUMN IF NOT EXISTS event_time_kind TEXT;
 """
 
+# Retain the first conflicting message at each Kafka position for investigation.
+CREATE_CONFLICT_TABLE = """
+CREATE TABLE IF NOT EXISTS transaction_conflicts (
+    kafka_topic TEXT NOT NULL,
+    kafka_partition INTEGER NOT NULL,
+    kafka_offset BIGINT NOT NULL,
+    transaction_id TEXT NOT NULL,
+    original_event JSONB NOT NULL,
+    conflicting_event JSONB NOT NULL,
+    detected_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (kafka_topic, kafka_partition, kafka_offset)
+)
+"""
+
+BUSINESS_FIELDS = (
+    "source_dataset", "source_file", "source_row", "event_time_kind", "event_time",
+    "source_bank", "source_account", "destination_bank", "destination_account",
+    "amount_received", "receiving_currency", "amount_paid", "payment_currency",
+    "payment_format", "is_laundering",
+)
+
+
+def business_values(values: dict) -> tuple:
+    """Exclude ingestion metadata when comparing two validated transactions."""
+    return tuple(values[field] for field in BUSINESS_FIELDS)
+
 # Fixed, parameterized SQL keeps event values separate from SQL instructions.
 # Duplicate replays keep the first stored record and its original provenance.
 INSERT_TRANSACTION = """
@@ -140,6 +166,7 @@ def main() -> None:
         with psycopg.connect(autocommit=True, connect_timeout=10) as connection:
             connection.execute(CREATE_TABLE)
             connection.execute(ADD_SOURCE_COLUMNS)
+            connection.execute(CREATE_CONFLICT_TABLE)
             consumer.subscribe([topic])
             logging.info("Reading %s into PostgreSQL transactions", topic)
             while running:
@@ -162,6 +189,27 @@ def main() -> None:
                     # ponytail: one transaction per message; batch if throughput needs it.
                     with connection.transaction():
                         result = connection.execute(INSERT_TRANSACTION, values)
+                        if result.rowcount == 0:
+                            row = connection.execute(
+                                "SELECT " + ", ".join(BUSINESS_FIELDS) + ", raw_event "
+                                "FROM transactions WHERE transaction_id = %s",
+                                (values["transaction_id"],),
+                            ).fetchone()
+                            if row is None:
+                                raise RuntimeError("Duplicate transaction disappeared during comparison")
+                            if row[:-1] != business_values(values):
+                                connection.execute(
+                                    """INSERT INTO transaction_conflicts
+                                       (kafka_topic, kafka_partition, kafka_offset, transaction_id,
+                                        original_event, conflicting_event)
+                                       VALUES (%s, %s, %s, %s, %s, %s)
+                                       ON CONFLICT DO NOTHING""",
+                                    (message.topic(), message.partition(), message.offset(),
+                                     values["transaction_id"], Jsonb(row[-1]), values["raw_event"]),
+                                )
+                                logging.warning("Conflicting transaction ID %s at %s/%s/%s",
+                                                values["transaction_id"], message.topic(),
+                                                message.partition(), message.offset())
                     inserted += result.rowcount
 
                     # Confirm Kafka progress only after PostgreSQL has committed.

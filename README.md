@@ -95,7 +95,7 @@ By default, the producer preserves the CSV row order and source event timestamp.
 
 ## Flink account features and Web UI
 
-Flink runs as two permanent services: `flink-jobmanager` (coordination and Web UI) and `flink-taskmanager` (computation). The temporary `flink-submit` service submits SQL and exits. This version pins Flink 1.20.3, Kafka/JDBC connectors 3.3.0-1.20, and PostgreSQL JDBC driver 42.7.5.
+Flink runs as two permanent services: `flink-jobmanager` (coordination and Web UI) and `flink-taskmanager` (computation). The temporary `flink-submit` service submits the DataStream job and exits; `latest-offset` submits the historical SQL batch job. This version pins Flink 1.20.3, Kafka/JDBC connectors 3.3.0-1.20, and PostgreSQL JDBC driver 42.7.5.
 
 ### Start the cluster and submit a live job
 
@@ -109,9 +109,9 @@ docker compose run --rm flink-submit
 
 Compose runs a one-shot `flink-state-init` service before the JobManager. It prepares `volume/flink/` for the Flink user so fresh Linux bind mounts are writable for checkpoints.
 
-Open [Flink Web UI](http://localhost:8081). Under **Running Jobs**, select `aml-account-features-v1` to inspect its operators, records, watermarks and checkpoints. **Task Managers** shows the worker. Kafka UI remains at [http://localhost:8080](http://localhost:8080). A successful cluster startup alone does not submit a job; check that exactly one feature job is running. Cancel an existing job in the UI before submitting another.
+Open [Flink Web UI](http://localhost:8081). Under **Running Jobs**, select `aml-account-features-v2` to inspect its operators, records, watermarks and checkpoints. **Task Managers** shows the worker. Kafka UI remains at [http://localhost:8080](http://localhost:8080). A successful cluster startup alone does not submit a job; check that exactly one feature job is running. Cancel an existing job in the UI before submitting another.
 
-The job reads `aml-transactions` independently of Raw Writer, deduplicates transactions inside one-hour event-time windows, and upserts these features into `account_window_features`:
+The job reads `aml-transactions` independently of Raw Writer, keeps the first event per transaction ID, records later conflicting content, and upserts these features into `account_window_features`:
 
 - Incoming/outgoing transaction counts and amounts; net inflow.
 - Distinct external senders (Fan-in) and receivers (Fan-out).
@@ -131,9 +131,62 @@ docker compose run --rm producer \
 
 ### Event time and replay limits
 
-Windows use the dataset's timezone-free event timestamp, not today's ingestion time. A one-minute watermark closes hourly windows after event time advances past their end. Final results are emitted when windows close, not for every transaction. The first 5,000 IBM rows span only part of an hour, so a short live replay may correctly produce no closed-window output yet.
+Windows use the dataset's timezone-free event timestamp, not today's ingestion time. A one-minute watermark triggers the first hourly result. The job retains the window for five additional minutes of event time: eligible late events trigger a revised full result, upserted to PostgreSQL. The first 5,000 IBM rows span only part of an hour, so a short live replay may correctly produce no closed-window output yet.
 
-Live mode assumes approximately ordered input. Events arriving after their window has closed are dropped from feature computation, although Raw Writer still archives them. This version does not automatically correct closed windows for very late data; inspect Flink's late-record metrics and use a controlled bounded rebuild when needed. Replaying an older dataset into an already advanced live job is not a valid way to merge histories.
+Live mode assumes approximately ordered input. After the five-minute allowed-lateness period, affected account movements are written to `late_transaction_movements` for review rather than silently discarded. Raw Writer still archives the transaction. The side output does not automatically rebuild old windows. A watermark advances with event time, not wall-clock time; replaying an older dataset into an advanced live job sends its unseen transactions to the late path.
+
+#### Verify late and conflicting events
+
+Run the following isolated integration check with ports 5432, 8081, and 9092 free.
+It uses its own Compose project
+and temporary data directory, never the project's `volume/` data:
+
+```bash
+docker build -t aml-python-datastream:dev .
+docker build -f flink/Dockerfile.datastream -t aml-flink-datastream:dev .
+uv run --extra streaming python scripts/check_streaming_edge_cases.py
+```
+
+It checks a transaction arriving before and after its window closes, identical
+duplicates, and conflicting duplicate IDs with equal, different same-window,
+and cross-window event times. After a successful run it clears the isolated
+test topic, consumer groups, SQL rows, and Flink state, and stops its containers.
+On failure it keeps the test data for diagnosis. The project name and directory
+are printed at startup. This check does not reset existing project containers or data.
+
+Raw Writer retains the first successfully inserted row per transaction ID.
+The DataStream job keeps the first event per ID across windows and writes later
+conflicting content to `flink_transaction_conflicts`; Raw Writer also records
+conflicts in `transaction_conflicts`. The current topic has one partition, so
+both consumers see its events in the same order. Conflicts indicate a data-quality
+problem; neither the first value nor a later one is automatically established as correct.
+An ingestion timestamp can vary on a normal replay and is not by itself a
+business-content conflict. The Flink path excludes later conflicting messages
+from feature calculation; the conflict records require investigation.
+
+For suspected late data, inspect the Flink job's watermark, status, and available
+operator metrics, and compare raw transactions with window features. These checks
+do not prove a window is complete. Before rebuilding, stop the affected job and
+producers, identify the affected windows and a complete, trusted source, and
+resolve conflicting IDs. Validate a bounded rebuild in an isolated database first;
+do not overwrite existing windows until results are checked. A bounded Kafka scan
+is suitable only if the retained input is complete and conflicts are resolved.
+Replacing or clearing old results requires an explicit scoped plan; an upsert
+alone will not remove stale rows that disappear from a rebuilt result. The JDBC
+sinks are idempotent per key but do not establish end-to-end exactly-once delivery.
+
+The global first-seen deduplication state is retained for the lifetime of the job
+and grows with unique transaction IDs; the local demonstration uses heap state.
+Window aggregates also retain distinct counterparties until allowed lateness
+expires, so high-cardinality windows increase state. Measure state size before
+larger runs. A fresh job without a restored checkpoint
+rebuilds deduplication state from retained Kafka history, which must be complete.
+
+On 2026-10-29 an isolated live run merged the first 1,000 rows from each IBM
+Small dataset in event-time order, followed by a synthetic event to close the
+final windows. All 872 HI and 862 LI account/currency/hour feature rows matched
+the CSV reference and independent PostgreSQL aggregation. This is a sample
+correctness check, not a full-dataset or throughput evaluation.
 
 Checkpointing runs every 10 seconds, using the shared project bind mount `volume/flink/`. TaskManager failure can recover through the running JobManager and checkpoints. This session cluster does not configure JobManager high availability: after a full cluster restart, manually submit a new job, which reads Kafka from the earliest retained offset. Rebuilding unordered history requires the bounded mode below; live replay must respect the watermark assumptions. Incomplete Kafka retention cannot rebuild complete history. No end-to-end exactly-once claim is made.
 
