@@ -5,7 +5,10 @@ set -euo pipefail
 # Batch execution finalizes the last window without artificial transactions.
 mode="${1:-unbounded}"
 case "$mode" in
-  unbounded) runtime=streaming ;;
+  unbounded)
+    exec /opt/flink/bin/flink run -d -m flink-jobmanager:8081 \
+      -c aml.AmlStreamingJob /opt/flink/aml/aml-streaming.jar
+    ;;
   latest-offset) runtime=batch ;;
   *) echo "Usage: submit.sh [unbounded|latest-offset]" >&2; exit 2 ;;
 esac

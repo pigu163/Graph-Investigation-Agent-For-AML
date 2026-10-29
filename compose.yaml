@@ -129,7 +129,7 @@ services:
   flink-jobmanager:
     build:
       context: .
-      dockerfile: flink/Dockerfile
+      dockerfile: flink/Dockerfile.datastream
     image: aml-flink:local
     command: jobmanager
     ports:
