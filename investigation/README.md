@@ -80,4 +80,75 @@ test-created evidence-limit rows are rolled back.
 The live streaming job can revise window features after late events; these
 functions query archived transactions rather than assuming window features are
 complete. The `transactions` table does not currently provide an account/time
-index; measure query performance and add indexes if the dataset size warrants it.
+index by default; measure query performance and add indexes if the dataset size warrants it.
+
+## Bounded graph and temporal investigation
+
+`graph_investigation.py` expands a local directed NetworkX `MultiDiGraph` in
+batches from PostgreSQL and returns a JSON-compatible graph with the original
+transaction IDs, timestamps, direction, amounts, currencies, and provenance.
+Its functions consume the returned graph without requiring another database call:
+
+```python
+from graph_investigation_agent_for_aml.graph_investigation import (
+    compute_graph_features,
+    detect_cycles,
+    detect_fan_in,
+    detect_fan_out,
+    detect_rapid_pass_through,
+    detect_reciprocal_flows,
+    expand_transaction_graph,
+    trace_fund_flow,
+)
+
+with psycopg.connect() as connection:
+    account = (connection, "LI-Small_Trans", "20", "1234",
+               datetime(2022, 9, 1), datetime(2022, 9, 2))
+    graph = expand_transaction_graph(*account, hops=2, direction="all",
+                                     max_nodes=500, max_edges=2000)
+    features = compute_graph_features(graph)
+    fan_in = detect_fan_in(graph, min_counterparties=3)
+    fan_out = detect_fan_out(graph, min_counterparties=3)
+    reciprocal = detect_reciprocal_flows(graph, max_delay_seconds=86400)
+    cycles = detect_cycles(graph, max_hops=3, max_gap_seconds=86400)
+    paths = trace_fund_flow(graph, max_hops=3, max_gap_seconds=86400)
+    rapid = detect_rapid_pass_through(graph, max_delay_seconds=3600)
+```
+
+Expansion fetches transactions touching each successive frontier; it does not
+necessarily include edges between two outermost nodes. It returns requested
+limits, completed hops, graph size and explicit truncation reason. All analysis
+results carry this scope; a negative fan result is `null` if expansion was
+truncated. Results are about this local graph and time window, not a whole
+network. The limit is on fetched output, not a guarantee of database scan time.
+If ingestion runs concurrently, use a repeatable-read database transaction for
+a stable multi-query snapshot.
+
+Direction is followed at each expansion hop: `out` walks outgoing transactions,
+`in` walks incoming transactions, and `all` uses both. Neighbor counts exclude
+self-transfers; transaction counts include them. Use `all` for features,
+reciprocal analysis and rapid pass-through, which need both directions. Fan-in
+and fan-out return distinct external counterparties and supporting transactions.
+
+Paths are directed simple paths starting at the target; cycles are simple
+directed cycles containing it. Cycles are rotated to a feasible chronological
+start, which may be another account; structural cycles that fail chronological
+or gap checks remain visible with `temporal_status` explaining the outcome.
+Equal timestamps are retained but flagged as order-ambiguous. Adjacent transactions expose currency comparability and
+amount comparison; cross-currency amounts are not compared. Reciprocal and
+rapid pass-through results are transaction pairs, not allocation of money.
+These indicators do not prove that the same funds moved or establish crime.
+`max_results` and `max_states` bound path/pair search, and `search_truncated`
+signals an incomplete search independently of graph expansion truncation.
+
+Optional [account/time index definitions](indexes.sql) are provided for
+measured workloads. They are not installed automatically: index creation can
+affect write throughput and storage. Compare `EXPLAIN (ANALYZE, BUFFERS)` on
+representative account degrees and time windows before adopting them.
+
+For integration testing, set `AML_GRAPH_TEST_DATABASE_URL` to a disposable
+PostgreSQL database named `aml_graph_test` and run
+`pytest tests/test_graph_investigation.py`. The fixture writes synthetic graph
+records and, when available, 1,000 real LI-Small CSV rows into that database;
+never point this variable at a database containing user data. Without it, the
+pure graph tests still run and database tests are skipped.
