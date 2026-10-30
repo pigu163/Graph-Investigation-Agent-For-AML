@@ -242,13 +242,13 @@ dependencies = [
     { name = "numpy" },
     { name = "pandas" },
     { name = "polars" },
+    { name = "psycopg", extra = ["binary"] },
     { name = "scikit-learn" },
 ]
 
 [package.optional-dependencies]
 streaming = [
     { name = "confluent-kafka" },
-    { name = "psycopg", extra = ["binary"] },
 ]
 
 [package.dev-dependencies]
@@ -266,7 +266,7 @@ requires-dist = [
     { name = "numpy", specifier = ">=2.5.4" },
     { name = "pandas", specifier = ">=3.1.0" },
     { name = "polars", specifier = ">=2.1.0" },
-    { name = "psycopg", extras = ["binary"], marker = "extra == 'streaming'", specifier = ">=3.2" },
+    { name = "psycopg", extras = ["binary"], specifier = ">=3.2" },
     { name = "scikit-learn", specifier = ">=1.9.1" },
 ]
 provides-extras = ["streaming"]

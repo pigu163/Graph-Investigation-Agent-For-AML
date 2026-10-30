@@ -13,11 +13,12 @@ The repository provides an IBM AML transaction replay pipeline, Kafka ingestion,
 | Transaction replay | Python CSV producer, stable IDs, source provenance, configurable rate and event-time sorting |
 | Persistence | Raw transactions, duplicate/conflict tracking and Kafka provenance in PostgreSQL |
 | Streaming features | Hourly inflow/outflow, counts and distinct counterparties; event-time windows and late-event handling |
+| Investigation queries | PostgreSQL transaction details, account summaries and counterparties with source evidence |
 | Web frontend | Next.js glass shell, five route placeholders and an opt-in synthetic graph preview |
 | Investigation Agent and API | Planned: LangGraph, FastAPI, graph/temporal tools and evidence-based reports |
 | Risk and model management | Planned: trained ML scoring, alert dispatch and MLflow integration |
 
-The frontend is not connected to a backend API. Live monitoring, operational investigations and model metrics are not yet available.
+The frontend is not connected to a backend API. Live monitoring, operational investigations and model metrics are not yet available. See the [investigation query guide](investigation/README.md) for query usage and evidence semantics.
 
 ## Target architecture
 
