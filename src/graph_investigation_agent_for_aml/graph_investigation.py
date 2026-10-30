@@ -45,14 +45,14 @@ def _graph_result(tool, graph_data, result, *, search_truncated=False, **query):
 
 
 def expand_transaction_graph(connection, dataset, bank, account, start, end, *,
-                             hops=2, direction="all", max_nodes=500, max_edges=2000):
+                             hops=2, direction="all", max_nodes=500, max_edges=2000, as_of=None):
     """Expand frontier edges up to hops; preserve parallel transactions and bounds.
 
     Outer-hop nodes are included, but edges between two outer-hop nodes are not
     fetched unless they also touch an earlier frontier. Use a repeatable-read
     transaction if a stable snapshot is needed while ingestion is running.
     """
-    params = _params(dataset, bank, account, start, end, direction)
+    params = _params(dataset, bank, account, start, end, direction, as_of=as_of)
     _bounded_int("hops", hops, 1, MAX_HOPS)
     _bounded_int("max_nodes", max_nodes, 1, MAX_NODES)
     _bounded_int("max_edges", max_edges, 1, MAX_EDGES)
@@ -72,11 +72,13 @@ def expand_transaction_graph(connection, dataset, bank, account, start, end, *,
             SELECT {TRANSACTION_COLUMNS} FROM transactions t
             JOIN frontier f ON t.source_bank = f.bank AND t.source_account = f.account
             WHERE t.source_dataset = %(dataset)s AND t.event_time >= %(start)s AND t.event_time < %(end)s
+              AND (%(as_of)s::timestamptz IS NULL OR t.stored_at <= %(as_of)s)
               AND %(direction)s IN ('all', 'out') AND NOT (t.transaction_id = ANY(%(seen)s::text[]))
             UNION
             SELECT {TRANSACTION_COLUMNS} FROM transactions t
             JOIN frontier f ON t.destination_bank = f.bank AND t.destination_account = f.account
             WHERE t.source_dataset = %(dataset)s AND t.event_time >= %(start)s AND t.event_time < %(end)s
+              AND (%(as_of)s::timestamptz IS NULL OR t.stored_at <= %(as_of)s)
               AND %(direction)s IN ('all', 'in') AND NOT (t.transaction_id = ANY(%(seen)s::text[]))
         )
         SELECT * FROM candidates ORDER BY event_time, transaction_id LIMIT %(limit)s

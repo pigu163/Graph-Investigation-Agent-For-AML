@@ -15,6 +15,7 @@ dependencies = [
     "pandas>=3.1.0",
     "polars>=2.1.0",
     "psycopg[binary]>=3.2",
+    "pydantic>=2.0",
     "scikit-learn>=1.9.1",
 ]
 
@@ -35,3 +36,6 @@ dev = [
     "pytest>=9.1.1",
     "ruff>=0.17.2",
 ]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]

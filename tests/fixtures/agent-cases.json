@@ -1,0 +1,6 @@
+[
+  {"account": "A", "expected": {"detect_fan_in": {"observed": true, "transaction_ids": ["graph-investigation:1", "graph-investigation:4", "graph-investigation:6"]}, "detect_rapid_pass_through": {"observed": true, "transaction_ids": ["graph-investigation:1", "graph-investigation:2", "graph-investigation:3"]}}},
+  {"account": "B", "expected": {"detect_fan_in": {"observed": false, "transaction_ids": []}, "detect_rapid_pass_through": {"observed": true, "transaction_ids": ["graph-investigation:2", "graph-investigation:3", "graph-investigation:4", "graph-investigation:5"]}}},
+  {"account": "C", "expected": {"detect_fan_in": {"observed": false, "transaction_ids": []}, "detect_rapid_pass_through": {"observed": false, "transaction_ids": []}}},
+  {"account": "D", "expected": {"detect_fan_in": {"observed": false, "transaction_ids": []}, "detect_rapid_pass_through": {"observed": false, "transaction_ids": []}}}
+]

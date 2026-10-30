@@ -5,9 +5,15 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from graph_investigation_agent_for_aml.producer import IBM_HEADER, build_event, read_rows
-from graph_investigation_agent_for_aml.raw_writer import business_values, transaction_values
-
+from graph_investigation_agent_for_aml.producer import (
+    IBM_HEADER,
+    build_event,
+    read_rows,
+)
+from graph_investigation_agent_for_aml.raw_writer import (
+    business_values,
+    transaction_values,
+)
 
 SAMPLE = ["2022/09/01 00:08", "011", "A001", "012", "A002",
           "12.34000001", "US Dollar", "10.00000001", "Euro", "Wire", "0"]
