@@ -62,7 +62,7 @@ merged.
 `all`), optional currency, `limit` (1–1000) and `offset`. A self-transfer in a
 transaction result is labeled `self` even when one direction was requested.
 Pagination reports `has_more`; pages can shift if data changes between calls.
-Profile counts and sums cover the full filter, not a transaction page. Evidence
+Optional `as_of` is a timezone-aware timestamp that filters rows by `stored_at`; it describes when this database first stored the transaction, not when a historical source made it available. Profile counts and sums cover the full filter, not a transaction page. Evidence
 ID samples are capped at 20 per group with `evidence_truncated` signaling more.
 To inspect all supporting records, page through the matching account transactions
 and check the relevant counterparty/direction/currency.

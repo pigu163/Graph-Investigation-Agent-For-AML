@@ -9,14 +9,13 @@ import subprocess
 import time
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[1]
 
 
 def compose(*args, input=None):
     result = subprocess.run(
         ["docker", "compose", *args], cwd=ROOT, input=input,
-        text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True,
+        text=True, capture_output=True, check=True,
     )
     return result.stdout.strip()
 

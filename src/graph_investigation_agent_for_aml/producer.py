@@ -18,11 +18,10 @@ import json
 import sqlite3
 import tempfile
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from confluent_kafka import KafkaError, Producer
-
 
 IBM_HEADER = [
     "Timestamp", "From Bank", "Account", "To Bank", "Account",
@@ -54,17 +53,17 @@ def read_rows(path: Path, limit: int | None, sort_event_time: bool):
 
     # ponytail: disk-backed sorting also supports full CSVs without a huge Python list.
     # The temporary SQLite file is removed when replay finishes or fails normally.
-    with tempfile.TemporaryDirectory(prefix="aml-replay-") as directory:
-        with sqlite3.connect(Path(directory) / "rows.sqlite") as connection:
-            connection.execute("CREATE TABLE rows (source_row INTEGER, event_time TEXT, payload TEXT)")
-            connection.executemany(
-                "INSERT INTO rows VALUES (?, ?, ?)",
-                ((number, row[0], json.dumps(row)) for number, row in source_rows()),
-            )
-            for number, payload in connection.execute(
-                "SELECT source_row, payload FROM rows ORDER BY event_time, source_row"
-            ):
-                yield number, json.loads(payload)
+    with tempfile.TemporaryDirectory(prefix="aml-replay-") as directory, \
+            sqlite3.connect(Path(directory) / "rows.sqlite") as connection:
+        connection.execute("CREATE TABLE rows (source_row INTEGER, event_time TEXT, payload TEXT)")
+        connection.executemany(
+            "INSERT INTO rows VALUES (?, ?, ?)",
+            ((number, row[0], json.dumps(row)) for number, row in source_rows()),
+        )
+        for number, payload in connection.execute(
+            "SELECT source_row, payload FROM rows ORDER BY event_time, source_row"
+        ):
+            yield number, json.loads(payload)
 
 
 def build_event(path: Path, row_number: int, row: list[str]) -> dict:
@@ -90,7 +89,7 @@ def build_event(path: Path, row_number: int, row: list[str]) -> dict:
         "payment_format": row[9],
         # This label is for evaluation, not a detection feature.
         "is_laundering": int(row[10]),
-        "ingested_at": datetime.now(timezone.utc).isoformat(),
+        "ingested_at": datetime.now(UTC).isoformat(),
     }
 
 

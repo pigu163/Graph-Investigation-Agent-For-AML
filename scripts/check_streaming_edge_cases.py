@@ -19,7 +19,6 @@ from confluent_kafka import Producer
 
 from graph_investigation_agent_for_aml.producer import build_event
 
-
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -42,7 +41,7 @@ def main():
 
     def compose(*args, input=None):
         return subprocess.run(command + list(args), input=input, check=True, text=True,
-                              timeout=180, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                              timeout=180, capture_output=True)
 
     producer = None
     conn = None

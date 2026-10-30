@@ -16,10 +16,10 @@ The repository provides an IBM AML transaction replay pipeline, Kafka ingestion,
 | Investigation queries | PostgreSQL transaction details, account summaries and counterparties with source evidence |
 | Graph investigation tools | Bounded local transaction graphs, fan-in/out, reciprocal flows, cycles and temporal paths |
 | Web frontend | Next.js glass shell, five route placeholders and an opt-in synthetic graph preview |
-| Investigation Agent and API | Planned: LangGraph, FastAPI, graph/temporal tools and evidence-based reports |
+| Investigation Agent and API | Experimental bounded LangGraph CLI; FastAPI and fully verified narrative reports remain planned |
 | Risk and model management | Planned: trained ML scoring, alert dispatch and MLflow integration |
 
-The frontend is not connected to a backend API. Live monitoring, operational investigations and model metrics are not yet available. See the [investigation query guide](investigation/README.md) for query usage and evidence semantics.
+The frontend is not connected to a backend API. Live monitoring, operational investigations and model metrics are not yet available. See the [investigation query guide](investigation/README.md) for query usage and evidence semantics, and the [Agent guide](investigation/AGENT.md) for the experimental CLI and its limitations.
 
 ## Target architecture
 

@@ -19,6 +19,7 @@ import psycopg
 from confluent_kafka import Consumer, KafkaException
 from psycopg.types.json import Jsonb
 
+logger = logging.getLogger(__name__)
 
 # Source event timestamps have no timezone. Keep them as supplied by the dataset.
 CREATE_TABLE = """
@@ -124,7 +125,7 @@ def transaction_values(event: dict) -> dict:
     for name in ("amount_received", "amount_paid"):
         # Decimal preserves the exact amount instead of using binary floats.
         if not isinstance(event[name], str):
-            raise ValueError(f"{name} must be a decimal string")
+            raise TypeError(f"{name} must be a decimal string")
         amount = Decimal(event[name])
         if not amount.is_finite() or amount < 0:
             raise ValueError(f"{name} must be finite and nonnegative")
@@ -168,7 +169,7 @@ def main() -> None:
             connection.execute(ADD_SOURCE_COLUMNS)
             connection.execute(CREATE_CONFLICT_TABLE)
             consumer.subscribe([topic])
-            logging.info("Reading %s into PostgreSQL transactions", topic)
+            logger.info("Reading %s into PostgreSQL transactions", topic)
             while running:
                 message = consumer.poll(1)
                 if message is None:
@@ -179,7 +180,7 @@ def main() -> None:
                 try:
                     event = json.loads(message.value())
                     if not isinstance(event, dict):
-                        raise ValueError("The Kafka message must be a JSON object")
+                        raise TypeError("The Kafka message must be a JSON object")
                     values = transaction_values(event)
                     values.update(
                         kafka_topic=message.topic(),
@@ -207,9 +208,9 @@ def main() -> None:
                                     (message.topic(), message.partition(), message.offset(),
                                      values["transaction_id"], Jsonb(row[-1]), values["raw_event"]),
                                 )
-                                logging.warning("Conflicting transaction ID %s at %s/%s/%s",
-                                                values["transaction_id"], message.topic(),
-                                                message.partition(), message.offset())
+                                logger.warning("Conflicting transaction ID %s at %s/%s/%s",
+                                               values["transaction_id"], message.topic(),
+                                               message.partition(), message.offset())
                     inserted += result.rowcount
 
                     # Confirm Kafka progress only after PostgreSQL has committed.
@@ -219,7 +220,7 @@ def main() -> None:
                             raise KafkaException(partition.error)
                 except Exception:
                     # Stop on bad data or failed writes; never silently skip the message.
-                    logging.exception(
+                    logger.exception(
                         "Failed at %s partition %s offset %s",
                         message.topic(), message.partition(), message.offset(),
                     )
@@ -227,10 +228,10 @@ def main() -> None:
 
                 processed += 1
                 if processed % 1000 == 0:
-                    logging.info("Processed %s messages; inserted %s rows", processed, inserted)
+                    logger.info("Processed %s messages; inserted %s rows", processed, inserted)
     finally:
         consumer.close()
-        logging.info("Stopped: processed %s messages; inserted %s rows", processed, inserted)
+        logger.info("Stopped: processed %s messages; inserted %s rows", processed, inserted)
 
 
 if __name__ == "__main__":

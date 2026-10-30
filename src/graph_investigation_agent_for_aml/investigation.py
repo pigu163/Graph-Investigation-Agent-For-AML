@@ -32,6 +32,7 @@ MOVEMENTS = """
                (source_bank = destination_bank AND source_account = destination_account) AS is_self
         FROM transactions
         WHERE source_dataset = %(dataset)s AND event_time >= %(start)s AND event_time < %(end)s
+          AND (%(as_of)s::timestamptz IS NULL OR stored_at <= %(as_of)s)
           AND destination_bank = %(bank)s AND destination_account = %(account)s
           AND (%(direction)s = 'all' OR %(direction)s = 'in')
           AND (%(currency)s::text IS NULL OR receiving_currency = %(currency)s)
@@ -42,6 +43,7 @@ MOVEMENTS = """
                (source_bank = destination_bank AND source_account = destination_account) AS is_self
         FROM transactions
         WHERE source_dataset = %(dataset)s AND event_time >= %(start)s AND event_time < %(end)s
+          AND (%(as_of)s::timestamptz IS NULL OR stored_at <= %(as_of)s)
           AND source_bank = %(bank)s AND source_account = %(account)s
           AND (%(direction)s = 'all' OR %(direction)s = 'out')
           AND (%(currency)s::text IS NULL OR payment_currency = %(currency)s)
@@ -59,7 +61,7 @@ def _json_value(value):
     return value
 
 
-def _params(dataset, bank, account, start, end, direction="all", currency=None):
+def _params(dataset, bank, account, start, end, direction="all", currency=None, as_of=None):
     for name, value in (("dataset", dataset), ("bank", bank), ("account", account)):
         if not isinstance(value, str) or not value.strip():
             raise ValueError(f"{name} must be a nonempty string")
@@ -73,8 +75,10 @@ def _params(dataset, bank, account, start, end, direction="all", currency=None):
         raise ValueError("direction must be in, out, or all")
     if currency is not None and (not isinstance(currency, str) or not currency.strip()):
         raise ValueError("currency must be a nonempty string or None")
+    if as_of is not None and (not isinstance(as_of, datetime) or as_of.utcoffset() is None):
+        raise ValueError("as_of must be a timezone-aware datetime or None")
     return {"dataset": dataset, "bank": bank, "account": account, "start": start,
-            "end": end, "direction": direction, "currency": currency}
+            "end": end, "direction": direction, "currency": currency, "as_of": as_of}
 
 
 def _page(params, limit, offset):
@@ -94,9 +98,9 @@ def _response(tool, query, result, **extra):
 
 
 def get_transactions(connection, dataset, bank, account, start, end, *,
-                     direction="all", currency=None, limit=100, offset=0):
+                     direction="all", currency=None, limit=100, offset=0, as_of=None):
     """Return one row per transaction involving the account in [start, end)."""
-    params = _params(dataset, bank, account, start, end, direction, currency)
+    params = _params(dataset, bank, account, start, end, direction, currency, as_of)
     page = _page(params, limit, offset)
     statement = f"""
         SELECT {TRANSACTION_COLUMNS},
@@ -107,6 +111,7 @@ def get_transactions(connection, dataset, bank, account, start, end, *,
                  THEN 'in' ELSE 'out' END AS direction
         FROM transactions t
         WHERE t.source_dataset = %(dataset)s AND t.event_time >= %(start)s AND t.event_time < %(end)s
+          AND (%(as_of)s::timestamptz IS NULL OR t.stored_at <= %(as_of)s)
           AND ((t.destination_bank = %(bank)s AND t.destination_account = %(account)s
                 AND (%(direction)s = 'all' OR %(direction)s = 'in')
                 AND (%(currency)s::text IS NULL OR t.receiving_currency = %(currency)s))
@@ -139,9 +144,9 @@ def get_transaction_details(connection, dataset, transaction_id):
                      limitations=["Event timestamps use the source's timezone semantics."])
 
 
-def get_account_profile(connection, dataset, bank, account, start, end, *, currency=None):
+def get_account_profile(connection, dataset, bank, account, start, end, *, currency=None, as_of=None):
     """Summarize complete-window incoming/outgoing movements by currency."""
-    params = _params(dataset, bank, account, start, end, currency=currency)
+    params = _params(dataset, bank, account, start, end, currency=currency, as_of=as_of)
     with connection.cursor(row_factory=dict_row) as cursor:
         # One statement ensures direction and currency totals use the same snapshot.
         cursor.execute(MOVEMENTS + """
@@ -176,9 +181,9 @@ def get_account_profile(connection, dataset, bank, account, start, end, *, curre
 
 
 def get_counterparties(connection, dataset, bank, account, start, end, *,
-                       direction="all", currency=None, limit=100, offset=0):
+                       direction="all", currency=None, limit=100, offset=0, as_of=None):
     """Summarize external counterparties by direction and movement currency."""
-    params = _params(dataset, bank, account, start, end, direction, currency)
+    params = _params(dataset, bank, account, start, end, direction, currency, as_of)
     page = _page(params, limit, offset)
     with connection.cursor(row_factory=dict_row) as cursor:
         cursor.execute(MOVEMENTS + """
