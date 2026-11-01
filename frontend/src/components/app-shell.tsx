@@ -49,7 +49,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         </GlassPanel>
         <div className="min-w-0 space-y-8">
           <GlassPanel className="flex flex-wrap items-center justify-between gap-4 px-6 py-4">
-            <div className="text-sm"><span className="mr-2 inline-block size-2 rounded-full bg-slate-400" aria-hidden="true" />Backend not connected</div>
+            <div className="text-sm"><span className="mr-2 inline-block size-2 rounded-full bg-slate-400" aria-hidden="true" />Connection status is shown in each workspace</div>
             <div className="flex flex-wrap gap-4 text-xs text-muted-foreground">
               <label className="flex cursor-pointer items-center gap-2"><input type="checkbox" checked={opaque} onChange={(e) => setOpaque(e.target.checked)} className="size-4 accent-[#b3c7ff]" />Opaque surfaces</label>
               <label className="flex cursor-pointer items-center gap-2"><input type="checkbox" checked={reduceMotion} onChange={(e) => setReduceMotion(e.target.checked)} className="size-4 accent-[#b3c7ff]" />Reduce motion</label>

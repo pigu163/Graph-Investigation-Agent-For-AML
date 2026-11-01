@@ -40,6 +40,9 @@ volume/
 # Local agent instructions
 AGENTS.md
 
+# CodeGraph's machine-local semantic index.
+/.codegraph/
+
 # Jupyter and macOS
 .ipynb_checkpoints/
 .DS_Store

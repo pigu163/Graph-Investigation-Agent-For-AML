@@ -6,7 +6,7 @@ An evidence-grounded financial crime investigation project combining transaction
 
 ## Current status
 
-The repository provides an IBM AML transaction replay pipeline, Kafka ingestion, PostgreSQL persistence, Flink account features and a separate web frontend foundation.
+The repository provides an IBM AML transaction replay pipeline, Kafka ingestion, PostgreSQL persistence, Flink account features and alerts, and a web frontend for reviewing those alerts.
 
 | Component | Implemented scope |
 | --- | --- |
@@ -15,11 +15,12 @@ The repository provides an IBM AML transaction replay pipeline, Kafka ingestion,
 | Streaming features | Hourly inflow/outflow, counts and distinct counterparties; event-time windows and late-event handling |
 | Investigation queries | PostgreSQL transaction details, account summaries and counterparties with source evidence |
 | Graph investigation tools | Bounded local transaction graphs, fan-in/out, reciprocal flows, cycles and temporal paths |
-| Web frontend | Next.js glass shell, five route placeholders and an opt-in synthetic graph preview |
-| Investigation Agent | Experimental bounded LangGraph CLI with adaptive tool selection, evidence checks and JSON/Markdown reports; FastAPI and persistent case management remain planned |
-| Risk and model management | Planned: trained ML scoring, alert dispatch and MLflow integration |
+| Live alerts | Flink early fan-in/out and large-transaction threshold alerts persisted in PostgreSQL and streamed to the frontend |
+| Web frontend | Live alert list and transaction details, manual sender/recipient investigation, plus an opt-in synthetic graph preview |
+| Investigation Agent | Experimental bounded LangGraph CLI and a synchronous API invoked manually from an alert; persistent case management remains planned |
+| Risk and model management | Planned: trained ML scoring, automated alert dispatch and MLflow integration |
 
-The frontend is not connected to a backend API. Live monitoring, operational investigations and model metrics are not yet available. See the [investigation query guide](investigation/README.md) for query usage and evidence semantics, and the [Agent guide](investigation/AGENT.md) for the experimental CLI and its limitations.
+The alert view is a local demonstration with configurable example thresholds, not a production monitoring system. Other dashboard metrics, graph APIs and model metrics remain unavailable. See the [streaming guide](streaming/README.md#live-alerts-and-manual-investigation), [investigation query guide](investigation/README.md), and [Agent guide](investigation/AGENT.md).
 
 ## Target architecture
 
@@ -44,7 +45,7 @@ Open [localhost:3000](http://localhost:3000). This starts the frontend alone. Fo
 Place the IBM LI Small CSV at `dataset/LI-Small/LI-Small_Trans.csv`. Datasets and local service data are ignored by Git.
 
 ```bash
-docker compose up -d --build --wait raw-writer kafka-ui flink-jobmanager flink-taskmanager
+docker compose up -d --build --wait raw-writer kafka-ui flink-jobmanager flink-taskmanager api frontend
 docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -U aml_user -d aml_db < flink/schema.sql
 docker compose run --rm flink-submit
 docker compose run --rm producer \
@@ -52,7 +53,7 @@ docker compose run --rm producer \
   --bootstrap-servers kafka:29092 --sort-event-time --rate 500 --limit 5000
 ```
 
-Open [Kafka UI :8080](http://localhost:8080) or [Flink UI :8081](http://localhost:8081). Submit only one live feature job. Hourly results appear after event time advances past the window; a short sample may not close a window.
+Open [monitoring :3000](http://localhost:3000), [Kafka UI :8080](http://localhost:8080) or [Flink UI :8081](http://localhost:8081). Submit only one live feature job. Alerts can fire on individual events before a window closes; hourly feature results still require event time to advance. Rules and setup are described in the [streaming guide](streaming/README.md#live-alerts-and-manual-investigation).
 
 For replay modes, database inspection, validation, checkpoints and data resets, see the [streaming development guide](streaming/README.md) and [Flink guide](flink/README.md).
 
@@ -80,7 +81,7 @@ Use identifiers and a half-open event-time range that exist in the database. The
 
 ```text
 frontend/       Next.js application, UI components and frontend guide
-src/            Python transaction producer and raw writer
+src/            Python transaction producer, raw writer, investigation Agent and API
 flink/          DataStream job, bounded SQL job and database schema
 scripts/        Validation and development reset utilities
 tests/          Python tests and synthetic streaming fixtures
@@ -91,8 +92,8 @@ compose.yaml    Local services and on-demand replay/job submission
 
 ## Development roadmap
 
-1. Expose the on-demand LangGraph investigation workflow through FastAPI and persist case state.
-2. Introduce evaluated ML risk scoring and structured alerts with deduplicated dispatch.
-3. Connect the frontend to implemented APIs and evaluate detection, evidence quality and investigation cost.
+1. Persist investigation cases, add review workflow and expand the evidence/graph interface.
+2. Introduce evaluated ML risk scoring and deduplicated alert dispatch.
+3. Evaluate detection, evidence quality, throughput and investigation cost.
 
 Current streaming features are aggregates, not proof of laundering. The demonstration retains first-seen transaction IDs in Flink state, so state grows with unique IDs; very late events are recorded separately. No end-to-end exactly-once guarantee is claimed. See the streaming guide for replay and recovery limits.

@@ -40,7 +40,7 @@ def wait_for_transactions_table():
 
 def reset(stop=False):
     # Stop readers first: neither Kafka offsets nor checkpoints may restore old data.
-    compose("stop", "raw-writer", "kafka-ui", "flink-taskmanager", "flink-jobmanager")
+    compose("stop", "api", "raw-writer", "kafka-ui", "flink-taskmanager", "flink-jobmanager")
     compose("up", "-d", "--wait", "kafka", "postgres")
     groups = set(kafka("kafka-consumer-groups", "--list").splitlines())
     for group in ("aml-raw-writer-v1", "aml-flink-features-v1", "aml-flink-features-v2"):
@@ -64,7 +64,7 @@ def reset(stop=False):
     sql((ROOT / "flink/schema.sql").read_text())
     tables = set(sql("SELECT tablename FROM pg_tables WHERE schemaname='public';").splitlines())
     existing_tables = [
-        table for table in ("flink_transaction_conflicts", "late_transaction_movements",
+        table for table in ("risk_alerts", "flink_transaction_conflicts", "late_transaction_movements",
                             "transaction_conflicts", "transactions", "account_window_features")
         if table in tables
     ]
@@ -93,7 +93,7 @@ def reset(stop=False):
     for timestamp in ("-2", "-1"):
         assert kafka("kafka-get-offsets", "--topic", "aml-transactions", "--time", timestamp) == "aml-transactions:0:0"
     print("Reset verified: Kafka offsets 0/0; transactions 0; features 0; "
-          "Flink state removed. Services ready; no Flink job submitted.", flush=True)
+          "Flink state removed. API stopped; no Flink job submitted.", flush=True)
 
 
 def main():

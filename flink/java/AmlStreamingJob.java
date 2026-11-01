@@ -35,6 +35,8 @@ import org.apache.flink.streaming.api.functions.sink.RichSinkFunction;
 import org.apache.flink.streaming.api.functions.windowing.ProcessWindowFunction;
 import org.apache.flink.streaming.api.windowing.assigners.TumblingEventTimeWindows;
 import org.apache.flink.streaming.api.windowing.time.Time;
+import org.apache.flink.streaming.api.windowing.triggers.Trigger;
+import org.apache.flink.streaming.api.windowing.triggers.TriggerResult;
 import org.apache.flink.streaming.api.windowing.windows.TimeWindow;
 import org.apache.flink.util.Collector;
 import org.apache.flink.util.OutputTag;
@@ -175,6 +177,110 @@ public final class AmlStreamingJob {
         }
     }
 
+    /** Fire on each movement so threshold crossings do not wait for window close. */
+    public static final class EveryMovement extends Trigger<Movement, TimeWindow> {
+        @Override public TriggerResult onElement(Movement value, long timestamp, TimeWindow window, TriggerContext ctx) { return TriggerResult.FIRE; }
+        @Override public TriggerResult onProcessingTime(long time, TimeWindow window, TriggerContext ctx) { return TriggerResult.CONTINUE; }
+        @Override public TriggerResult onEventTime(long time, TimeWindow window, TriggerContext ctx) { return TriggerResult.CONTINUE; }
+        @Override public void clear(TimeWindow window, TriggerContext ctx) {}
+    }
+
+    public static final class AlertAccumulator implements java.io.Serializable {
+        public Set<String> senders = new HashSet<>(), receivers = new HashSet<>();
+        public Movement latest;
+    }
+
+    public static final class AlertAggregate implements AggregateFunction<Movement, AlertAccumulator, AlertAccumulator> {
+        private final int inThreshold, outThreshold;
+        public AlertAggregate(int inThreshold, int outThreshold) { this.inThreshold = inThreshold; this.outThreshold = outThreshold; }
+        @Override public AlertAccumulator createAccumulator() { return new AlertAccumulator(); }
+        @Override public AlertAccumulator add(Movement m, AlertAccumulator a) {
+            a.latest = m;
+            // ponytail: cap distinct sets at the configured threshold; later counts are unnecessary for a crossing alert.
+            if (m.counterparty != null && m.direction.equals("in") && a.senders.size() < inThreshold) a.senders.add(m.counterparty);
+            if (m.counterparty != null && m.direction.equals("out") && a.receivers.size() < outThreshold) a.receivers.add(m.counterparty);
+            return a;
+        }
+        @Override public AlertAccumulator getResult(AlertAccumulator a) { return a; }
+        @Override public AlertAccumulator merge(AlertAccumulator a, AlertAccumulator b) { throw new UnsupportedOperationException("Tumbling windows do not merge"); }
+    }
+
+    private static String alertId(String... parts) throws Exception {
+        StringBuilder value = new StringBuilder();
+        for (String part : parts) value.append(part.length()).append(':').append(part);
+        return java.util.HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(value.toString().getBytes(StandardCharsets.UTF_8)));
+    }
+
+    private static ObjectNode transaction(JsonNode event) {
+        ObjectNode result = JSON.createObjectNode();
+        for (String field : new String[]{"transaction_id", "source_dataset", "event_time", "event_time_kind", "source_bank", "source_account", "destination_bank", "destination_account", "amount_paid", "payment_currency", "amount_received", "receiving_currency", "payment_format"})
+            result.set(field, event.get(field));
+        return result;
+    }
+
+    private static String alert(String type, String version, JsonNode event, String bank, String account,
+                                String currency, String observed, String threshold, Long start, Long end) throws Exception {
+        String dataset = event.path("source_dataset").asText();
+        ObjectNode a = JSON.createObjectNode();
+        a.put("alert_id", start == null ? alertId(type, version, dataset, event.path("transaction_id").asText(), threshold)
+            : alertId(type, version, dataset, bank, account, currency, Long.toString(start), threshold));
+        a.put("alert_type", type); a.put("rule_version", version); a.put("source_dataset", dataset);
+        a.put("transaction_id", event.path("transaction_id").asText());
+        a.put("event_time", LocalDateTime.parse(event.path("event_time").asText(), EVENT_TIME).toString());
+        a.put("bank_id", bank); a.put("account_id", account); a.put("currency", currency);
+        a.put("observed", observed); a.put("threshold", threshold);
+        if (start != null) {
+            a.put("window_start", LocalDateTime.ofEpochSecond(start / 1000, 0, ZoneOffset.UTC).toString());
+            a.put("window_end", LocalDateTime.ofEpochSecond(end / 1000, 0, ZoneOffset.UTC).toString());
+        }
+        a.set("transaction", transaction(event));
+        return JSON.writeValueAsString(a);
+    }
+
+    public static final class LargeTransaction extends ProcessFunction<String, String> {
+        private final BigDecimal threshold; private final String currency, version;
+        public LargeTransaction(String threshold, String currency, String version) { this.threshold = new BigDecimal(threshold); this.currency = currency; this.version = version; }
+        @Override public void processElement(String value, Context ctx, Collector<String> out) throws Exception {
+            JsonNode e = JSON.readTree(value);
+            BigDecimal amount = new BigDecimal(e.path("amount_paid").asText());
+            if (e.path("payment_currency").asText().equals(currency) && amount.compareTo(threshold) >= 0)
+                out.collect(alert("large_transaction", version, e, e.path("source_bank").asText(), e.path("source_account").asText(), currency, amount.toPlainString(), threshold.toPlainString(), null, null));
+        }
+    }
+
+    public static final class FanAlert extends ProcessWindowFunction<AlertAccumulator, String, String, TimeWindow> {
+        private final int inThreshold, outThreshold; private final String version;
+        public FanAlert(int inThreshold, int outThreshold, String version) { this.inThreshold = inThreshold; this.outThreshold = outThreshold; this.version = version; }
+        @Override public void process(String key, Context ctx, Iterable<AlertAccumulator> input, Collector<String> out) throws Exception {
+            AlertAccumulator a = input.iterator().next(); Movement m = a.latest;
+            String direction = m.direction;
+            int count = direction.equals("in") ? a.senders.size() : a.receivers.size();
+            int threshold = direction.equals("in") ? inThreshold : outThreshold;
+            ValueState<Boolean> emitted = ctx.windowState().getState(new ValueStateDescriptor<>("alert-" + direction, Boolean.class));
+            if (m.counterparty != null && count >= threshold && !Boolean.TRUE.equals(emitted.value())) {
+                out.collect(alert(direction.equals("in") ? "fan_in" : "fan_out", version, JSON.readTree(m.event), m.bank, m.account, m.currency, Integer.toString(count), Integer.toString(threshold), ctx.window().getStart(), ctx.window().getEnd()));
+                emitted.update(true);
+            }
+        }
+        @Override public void clear(Context ctx) throws Exception {
+            ctx.windowState().getState(new ValueStateDescriptor<>("alert-in", Boolean.class)).clear();
+            ctx.windowState().getState(new ValueStateDescriptor<>("alert-out", Boolean.class)).clear();
+        }
+    }
+
+    public static final class AlertSink extends RichSinkFunction<String> {
+        private transient Connection db;
+        @Override public void open(Configuration p) throws Exception { db = connect(); }
+        @Override public void invoke(String value, Context c) throws Exception {
+            JsonNode a = JSON.readTree(value);
+            try (PreparedStatement s = db.prepareStatement("INSERT INTO risk_alerts (alert_id, source_dataset, transaction_id, event_time, payload) VALUES (?,?,?,?::timestamp,?::jsonb) ON CONFLICT (alert_id) DO NOTHING")) {
+                s.setString(1, a.path("alert_id").asText()); s.setString(2, a.path("source_dataset").asText());
+                s.setString(3, a.path("transaction_id").asText()); s.setString(4, a.path("event_time").asText()); s.setString(5, value); s.executeUpdate();
+            }
+        }
+        @Override public void close() throws Exception { if (db != null) db.close(); }
+    }
+
     public static final class FeatureSink extends RichSinkFunction<Feature> {
         private transient Connection db;
         @Override public void open(Configuration p) throws Exception { db = connect(); }
@@ -235,6 +341,13 @@ public final class AmlStreamingJob {
     }
 
     public static void main(String[] args) throws Exception {
+        int fanIn = Integer.parseInt(System.getenv().getOrDefault("AML_FAN_IN_THRESHOLD", "10"));
+        int fanOut = Integer.parseInt(System.getenv().getOrDefault("AML_FAN_OUT_THRESHOLD", "10"));
+        String amount = System.getenv().getOrDefault("AML_LARGE_AMOUNT_THRESHOLD", "100000");
+        String currency = System.getenv().getOrDefault("AML_LARGE_AMOUNT_CURRENCY", "USD");
+        String version = System.getenv().getOrDefault("AML_ALERT_RULE_VERSION", "demo-v1");
+        if (fanIn < 1 || fanOut < 1 || new BigDecimal(amount).signum() <= 0 || currency.isBlank() || version.isBlank())
+            throw new IllegalArgumentException("Alert thresholds must be positive and currency/version nonempty");
         StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
         env.setParallelism(1); env.enableCheckpointing(10000);
         env.getCheckpointConfig().setCheckpointStorage("file:///opt/flink/state/checkpoints");
@@ -245,6 +358,8 @@ public final class AmlStreamingJob {
         SingleOutputStreamOperator<String> unique = input.keyBy(s -> JSON.readTree(s).path("transaction_id").asText())
             .process(new Deduplicate()).uid("transaction-dedup");
         unique.getSideOutput(CONFLICTS).addSink(new ConflictSink()).uid("postgres-conflicts");
+        unique.process(new LargeTransaction(amount, currency, version)).uid("large-transaction-rule")
+            .addSink(new AlertSink()).uid("postgres-large-alerts");
         SingleOutputStreamOperator<Movement> movements = unique.process(new Expand(), Types.GENERIC(Movement.class))
             .assignTimestampsAndWatermarks(WatermarkStrategy.<Movement>forBoundedOutOfOrderness(Duration.ofMinutes(1))
                 .withTimestampAssigner((m, previous) -> m.timestamp)).uid("event-time-movements");
@@ -254,6 +369,12 @@ public final class AmlStreamingJob {
                 Types.GENERIC(Accumulator.class), Types.GENERIC(Accumulator.class), Types.GENERIC(Feature.class)).uid("account-window");
         features.addSink(new FeatureSink()).uid("postgres-features");
         features.getSideOutput(TOO_LATE).addSink(new LateSink()).uid("postgres-late-movements");
+        movements.keyBy(AmlStreamingJob::key).window(TumblingEventTimeWindows.of(Time.hours(1)))
+            .allowedLateness(Time.minutes(5)).trigger(new EveryMovement())
+            .aggregate(new AlertAggregate(fanIn, fanOut), new FanAlert(fanIn, fanOut, version),
+                Types.GENERIC(AlertAccumulator.class), Types.GENERIC(AlertAccumulator.class), Types.STRING)
+            .uid("fan-alert-rule")
+            .addSink(new AlertSink()).uid("postgres-fan-alerts");
         env.execute("aml-account-features-v2");
     }
 }

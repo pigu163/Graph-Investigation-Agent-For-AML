@@ -40,3 +40,14 @@ CREATE TABLE IF NOT EXISTS flink_transaction_conflicts (
     detected_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (transaction_id, original_fingerprint, conflicting_fingerprint)
 );
+
+-- One idempotent rule crossing; payload contains only public transaction fields.
+CREATE TABLE IF NOT EXISTS risk_alerts (
+    alert_id TEXT PRIMARY KEY,
+    source_dataset TEXT NOT NULL,
+    transaction_id TEXT NOT NULL,
+    event_time TIMESTAMP NOT NULL,
+    payload JSONB NOT NULL,
+    detected_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_risk_alerts_detected ON risk_alerts (detected_at DESC, alert_id);

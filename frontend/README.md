@@ -1,6 +1,6 @@
 # Graph Investigation frontend foundation
 
-Next.js App Router + React + TypeScript, Tailwind CSS v4, shadcn/ui-compatible owned components, Framer Motion, Recharts, Sigma.js and Graphology. This milestone configures the frontend; it is **not the completed monitoring or Agent application**.
+Next.js App Router + React + TypeScript, Tailwind CSS v4, shadcn/ui-compatible owned components, Framer Motion, Recharts, Sigma.js and Graphology. The monitoring view supports live rule alerts and manual investigations; the broader five-page product remains incomplete.
 
 ## Run locally
 
@@ -57,14 +57,14 @@ Stop and remove this project's containers and network, preserving stored data:
 docker compose down
 ```
 
-Frontend source changes require rebuilding the image. For hot reload while editing, use the local `npm run dev` workflow above. The frontend intentionally has no `depends_on` backend dependency: its disconnected screens and synthetic graph preview work with the streaming services stopped. Dockerization does not implement a FastAPI or MLflow integration.
+Frontend source changes require rebuilding the image. For hot reload while editing, use the local `npm run dev` workflow above. The frontend intentionally has no `depends_on` backend dependency: it displays disconnected status when the API is unavailable and does not start Docker services itself.
 
 ## Configured surfaces and routes
 
-- `/`: monitoring placeholder.
-- `/alerts`: alert placeholder.
+- `/`: live rule alerts, triggering transaction details, and manual sender/recipient investigation.
+- `/alerts`: the same live alert view.
 - `/graph`: graph placeholder with an **opt-in, visibly labeled synthetic renderer preview**, node/edge selection, directed edges, pan/zoom/reset and an accessible transaction list.
-- `/investigator`: workspace placeholder with a disabled Spotlight-style prompt, pending a real Agent API.
+- `/investigator`: workspace placeholder with a disabled free-form prompt and a link to manually investigate from live alerts.
 - `/models`: MLflow integration placeholder, not a working model registry.
 
 The shell contains reusable `GlassPanel` and shadcn/ui-style `Button` components. `globals.css` defines dark navy/graphite tokens, selective blur, ambient gradients, opaque content surfaces, focus styles, and reduced-motion/transparency fallbacks. The header's opaque-surface and reduced-motion controls last across client-side navigation; OS preferences are also respected. Controls reset on a full reload.
@@ -79,11 +79,11 @@ Recharts is installed for future real monitoring charts; no fake metrics are dis
 
 ## Backend boundary
 
-This checkout currently contains streaming/persistence services, not a FastAPI application or MLflow service. No endpoints are guessed and no API requests or credentials are embedded in the frontend. The shell truthfully displays **Backend not connected**. Compose includes the frontend alongside the existing Python, Kafka, Flink and PostgreSQL services.
+The Next.js server proxies its alert and investigation requests to the implemented FastAPI service. In Compose, `AML_API_INTERNAL_URL` points to `http://api:8000`; for local Next.js development it defaults to `http://127.0.0.1:8000`. An optional `AML_API_TOKEN` stays on the server and is forwarded to FastAPI, not embedded in browser code. See the [streaming guide](../streaming/README.md#live-alerts-and-manual-investigation) for setup and rule limits. MLflow remains unconnected.
 
-Before integration, agree API contracts against implemented FastAPI routes and their request/response schemas. Include source/dataset, bank/account identifiers, transaction IDs, time range, amount/currency, pagination/graph bounds, evidence provenance and availability/freshness metadata. Then wire REST reads, supported WebSocket monitoring events and SSE/verified Agent execution events. Keep MLflow and database credentials server-side. Mark draft contracts as proposed until the backend implements them.
+FastAPI supplies `/api/status`, `/api/alerts`, `/api/alerts/stream` and `/api/investigations`. The stream reports stored alerts, not every transaction. The investigation request is synchronous and returns actual tool events only after execution; it does not claim live Agent event streaming or persistent cases.
 
-The product requirements in local `AGENTS.md` cover all five intended screens, Agent/graph/evidence linking, accessibility and demo labeling. Full screens, graph neighborhood APIs, alert dispatch, Agent execution, MLflow metrics, authentication and backend contracts remain future work.
+The product requirements in local `AGENTS.md` cover all five intended screens, Agent/graph/evidence linking, accessibility and demo labeling. Full screens, graph neighborhood APIs, durable cases, automated alert dispatch, MLflow metrics and multi-user authentication remain future work.
 
 ## Verification
 
@@ -93,6 +93,6 @@ npm run build
 npm run typecheck
 ```
 
-For browser checks, visit all five routes, switch opaque surfaces and reduced motion, inspect desktop/tablet navigation, and load/unload the synthetic graph. Select accounts and transactions with both pointer and keyboard. Ensure every preview is labeled synthetic and there are no invented live metrics or operational Agent controls.
+For browser checks, visit all five routes, switch opaque surfaces and reduced motion, inspect desktop/tablet navigation, and load/unload the synthetic graph. Confirm the alert view distinguishes a stopped backend from an empty result and that investigations are launched only by the analyst. Ensure the graph preview remains visibly labeled synthetic.
 
 Reference: [Next.js installation](https://nextjs.org/docs/app/getting-started/installation), [shadcn/ui manual setup](https://ui.shadcn.com/docs/installation/manual), [Sigma.js quickstart](https://www.sigmajs.org/get-started/quickstart/), [Motion accessibility configuration](https://motion.dev/docs/react-motion-config).

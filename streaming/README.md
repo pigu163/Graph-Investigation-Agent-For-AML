@@ -2,6 +2,48 @@
 
 Run all commands from the repository root. For the project overview and quick start, see [README](../README.md).
 
+## Live alerts and manual investigation
+
+The Flink DataStream job emits early alerts for a large paid amount in one configured currency, or when distinct external senders/receivers reach a threshold in an account/currency's one-hour event-time window. Alerts are saved in PostgreSQL `risk_alerts`; the API streams the latest 100 to the monitoring and alerts pages. The page shows the triggering transaction and lets an analyst explicitly run the existing Agent for its sender or recipient. No LLM call is made automatically. A selected investigation queries the 24 hours ending at the trigger timestamp; its synchronous report is not persisted.
+
+The default rules are **illustrative demo values**, not calibrated AML thresholds: 10 distinct senders, 10 distinct receivers, and 100000 USD paid. Set the following in the root `.env` or shell before submitting the job; change `AML_ALERT_RULE_VERSION` when changing rules. Resubmit the Flink job for configuration changes to take effect.
+
+```text
+AML_FAN_IN_THRESHOLD=10
+AML_FAN_OUT_THRESHOLD=10
+AML_LARGE_AMOUNT_THRESHOLD=100000
+AML_LARGE_AMOUNT_CURRENCY=USD
+AML_ALERT_RULE_VERSION=demo-v1
+```
+
+Set `DS_key` in the root `.env` to enable analyst-initiated DeepSeek investigations. Each click permits at most three model requests. The API and frontend are bound to localhost for this local demo; optionally configure the same `AML_API_TOKEN` in `.env` for the API and the server-side Next.js proxy. The browser does not receive this token or database credentials. This is not a multi-user authentication system. A fresh job reads from Kafka's earliest retained offset: resubmitting after changing a rule may generate alerts for retained historical events, so test changes with isolated data and review replay scope.
+
+```bash
+docker compose up -d --build --wait raw-writer flink-jobmanager flink-taskmanager api frontend
+docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -U aml_user -d aml_db < flink/schema.sql
+docker compose run --rm flink-submit
+```
+
+Replay a sample using the commands below, then open <http://localhost:3000>. The status banner reports whether the API can reach the Flink job; persisted alerts may remain visible when it is stopped. An alert can appear before its transaction is archived by Raw Writer: investigation buttons wait until the transaction is present, and the API verifies its fields before running the Agent.
+
+Fan alerts fire once per rule/account/currency/hour on threshold crossing, without waiting for window close. The shown count is the count at that crossing, not a continually updated count; the shown transaction is the event that crossed the threshold, not a complete list of supporting transactions. Very late events beyond the five-minute allowed-lateness horizon do not revise fan alerts; they remain in the existing late-data output. Large-transaction alerts are independent of window closure. Event time from IBM CSV has an unknown timezone. Replays are deduplicated with Flink state and idempotent alert IDs; this does not establish end-to-end exactly-once delivery or latency guarantees.
+
+The SSE endpoint queries the latest alerts roughly once per second for each connected client. The view is limited to the most recent 100 and has no historical pagination. These settings and the fixed one-hour window are intentionally suitable for a small local demo; measure database load, delivery delay and recovery before scaling. Indicators require review and are not proof of financial crime.
+
+The project reset utility also clears `risk_alerts` and stops the API before clearing data. After a reset without `--stop`, start `api` again and explicitly resubmit the Flink job when ready.
+
+For an isolated integration check with a fake model and automatic container/data cleanup, first build the four explicitly named test images, then run the test script:
+
+```bash
+docker build -t aml-alert-test-flink:local -f flink/Dockerfile.datastream .
+docker build -t aml-alert-test-python:local -f Dockerfile .
+docker build -t aml-alert-test-api:local -f Dockerfile.api .
+docker build -t aml-alert-test-frontend:local frontend
+uv run --locked --group dev --extra streaming python scripts/check_live_alerts.py
+```
+
+The test uses ports 3000, 5432, 8000, 8081 and 9092 and requires them to be free. It creates a separate Compose project and temporary bind mounts; it does not use the project's `volume/` data or any paid model request.
+
 ## Replay IBM AML transactions to Kafka
 
 The local IBM AML Small archives and extracted CSV files belong in `dataset/`. They are ignored by Git and are not included in the Docker image.

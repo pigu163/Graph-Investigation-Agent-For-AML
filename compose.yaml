@@ -3,6 +3,9 @@ services:
     build:
       context: ./frontend
     image: aml-frontend:local
+    environment:
+      AML_API_INTERNAL_URL: http://api:8000
+      AML_API_TOKEN: ${AML_API_TOKEN:-}
     ports:
       - "127.0.0.1:3000:3000"
     healthcheck:
@@ -11,6 +14,25 @@ services:
       timeout: 5s
       retries: 20
       start_period: 10s
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    image: aml-api:local
+    ports:
+      - "127.0.0.1:8000:8000"
+    environment:
+      PGHOST: postgres
+      PGDATABASE: aml_db
+      PGUSER: aml_user
+      PGPASSWORD: aml_local_dev
+      AML_FLINK_REST_URL: http://flink-jobmanager:8081
+      AML_API_TOKEN: ${AML_API_TOKEN:-}
+      DS_key: ${DS_key:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
 
   kafka:
     image: apache/kafka:4.0.1
@@ -189,6 +211,11 @@ services:
     profiles: [etl]
     entrypoint: ["/docker-entrypoint.sh", "bash", "/opt/flink/aml/submit.sh"]
     environment:
+      AML_FAN_IN_THRESHOLD: ${AML_FAN_IN_THRESHOLD:-10}
+      AML_FAN_OUT_THRESHOLD: ${AML_FAN_OUT_THRESHOLD:-10}
+      AML_LARGE_AMOUNT_THRESHOLD: ${AML_LARGE_AMOUNT_THRESHOLD:-100000}
+      AML_LARGE_AMOUNT_CURRENCY: ${AML_LARGE_AMOUNT_CURRENCY:-USD}
+      AML_ALERT_RULE_VERSION: ${AML_ALERT_RULE_VERSION:-demo-v1}
       FLINK_PROPERTIES: |
         jobmanager.rpc.address: flink-jobmanager
         rest.address: flink-jobmanager
