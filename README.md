@@ -11,6 +11,23 @@ An evidence-grounded investigation prototype for transaction monitoring and temp
 
 Trained ML scoring, durable case management, automatic alert dispatch, production graph views and MLflow integration remain planned. The graph preview is explicitly synthetic. See the [Agent guide](investigation/AGENT.md) and [investigation tools](investigation/README.md).
 
+## Architecture
+
+[![Target architecture for streaming monitoring and on-demand investigation](image/aml-investigation-architecture.png)](image/aml-investigation-architecture.png)
+
+The diagram includes planned components as well as the current implementation.
+
+## Graph and temporal features
+
+The investigation tools build a bounded, directed account transaction graph with NetworkX. Parallel transfers retain their transaction IDs, timestamps, amounts and currencies.
+
+- **Account connectivity:** incoming and outgoing transaction counts, distinct senders and receivers, mutual counterparties, and inbound/outbound amounts grouped by currency. Transaction counts include self-transfers; distinct external counterparties exclude them.
+- **Fan-in and fan-out:** distinct external senders or receivers and their supporting transactions within the selected investigation window.
+- **Reciprocal flows and rapid pass-through:** incoming/outgoing transaction pairs, time differences and comparable-currency amounts. Reciprocal pairs share a counterparty; pass-through pairs are ordered in time.
+- **Cycles and temporal paths:** short directed cycles and chronological multi-hop outgoing paths, with transaction evidence and timing/amount comparisons. Equal timestamps leave order uncertain.
+
+Flink separately computes hourly incoming/outgoing counts and amounts, net inflow and distinct senders/receivers per account and currency. Graph expansion and search are bounded; truncation is reported. These patterns are indicators, and a path or temporal match does not prove the same funds moved.
+
 ## Run the streaming demo
 
 With Docker Desktop running, place the IBM CSV at `dataset/LI-Small/LI-Small_Trans.csv`, then run:
@@ -44,4 +61,4 @@ The [Agent guide](investigation/AGENT.md) covers budgets and output. Streaming r
 
 ## Layout
 
-`src/` contains the Python producer, persistence, investigation tools, Agent and API; `flink/` contains streaming jobs and schema; `frontend/` contains the Next.js application; `scripts/` contains the development reset utility. The [architecture diagram](image/aml-investigation-architecture.png) includes planned components.
+`src/` contains the Python producer, persistence, investigation tools, Agent and API; `flink/` contains streaming jobs and schema; `frontend/` contains the Next.js application; `scripts/` contains the development reset utility.
