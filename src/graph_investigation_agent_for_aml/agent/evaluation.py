@@ -33,27 +33,3 @@ def compare_reports(agent_report, baseline_report, *, agent_seconds, baseline_se
     return {"agent": metrics(agent_report, agent_seconds), "baseline": metrics(baseline_report, baseline_seconds),
             "limitations": ["This compares reported results, not accuracy against independently labeled cases.",
                             "Model cost is not inferred from call count; use provider usage and pricing."]}
-
-
-def score_case(report, expected):
-    """Score independently supplied indicator labels; unknown results stay unknown.
-
-    Labels describe the synthetic indicator, not confirmed criminal activity.
-    """
-    hypotheses = {item["hypothesis"]: item["status"] for item in report["hypotheses"]}
-    findings = {item["tool"]: item for item in report["findings"]}
-    output = {}
-    for tool, label in (("detect_fan_in", "Concentrated incoming transfers"),
-                        ("detect_rapid_pass_through", "Rapid onward transfers")):
-        actual = hypotheses.get(label, "not_examined")
-        target = expected[tool]
-        classified = actual in ("indicator_observed", "indicator_not_observed")
-        ids = set(findings.get(tool, {}).get("verified_transaction_ids", [])) if actual == "indicator_observed" else set()
-        reference = set(target["transaction_ids"])
-        output[tool] = {"expected": target["observed"], "status": actual,
-                        "correct": (actual == "indicator_observed") == target["observed"] if classified else None,
-                        "reference_precision": len(ids & reference) / len(ids) if ids else None,
-                        "reference_recall": len(ids & reference) / len(reference) if reference and classified else None,
-                        "unexpected_transaction_ids": sorted(ids - reference),
-                        "missing_transaction_ids": sorted(reference - ids)}
-    return output

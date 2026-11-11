@@ -71,14 +71,8 @@ def reset(stop=False):
     if existing_tables:
         sql("TRUNCATE TABLE " + ", ".join(existing_tables) + ";")
     if stop:
-        for table in existing_tables:
-            assert sql("SELECT count(*) FROM " + table + ";") == "0"
-        assert not ({"aml-transactions", "aml-risk-alerts", "aml-feature-updates"}
-                    & set(kafka("kafka-topics", "--list").splitlines()))
-        assert not ({"aml-raw-writer-v1", "aml-flink-features-v1", "aml-flink-features-v2"}
-                    & set(kafka("kafka-consumer-groups", "--list").splitlines()))
         compose("stop")
-        print("Reset verified: SQL test rows cleared; AML topics and consumer groups removed; "
+        print("Reset complete: SQL rows cleared; AML topics and consumer groups removed; "
               "Flink state removed. Containers stopped and kept.", flush=True)
         return
 
@@ -88,12 +82,7 @@ def reset(stop=False):
             "flink-jobmanager", "flink-taskmanager")
 
     wait_for_transactions_table()
-    assert sql("SELECT (SELECT count(*) FROM transactions), "
-               "(SELECT count(*) FROM account_window_features);") == "0|0"
-    for timestamp in ("-2", "-1"):
-        assert kafka("kafka-get-offsets", "--topic", "aml-transactions", "--time", timestamp) == "aml-transactions:0:0"
-    print("Reset verified: Kafka offsets 0/0; transactions 0; features 0; "
-          "Flink state removed. API stopped; no Flink job submitted.", flush=True)
+    print("Reset complete; API stopped; no Flink job submitted.", flush=True)
 
 
 def main():

@@ -1,98 +1,20 @@
-# Graph Investigation frontend foundation
+# Frontend
 
-Next.js App Router + React + TypeScript, Tailwind CSS v4, shadcn/ui-compatible owned components, Framer Motion, Recharts, Sigma.js and Graphology. The monitoring view supports live rule alerts and manual investigations; the broader five-page product remains incomplete.
+The Next.js application shows persisted Flink alerts and lets an analyst investigate the selected transaction's sender or recipient. The graph renderer is an opt-in synthetic preview; the free-form investigator and MLflow screens are placeholders.
 
-## Run locally
+## Run
 
-Use Node 22 (see `.nvmrc`) and npm. From this directory:
+With Node 22, from `frontend/`:
 
 ```bash
 npm ci
 npm run dev
 ```
 
-Open <http://localhost:3000>. `Ctrl+C` stops the server. Docker is not needed or started by these commands.
+Or from the project root, run `docker compose up -d --build --wait frontend`. Open <http://localhost:3000>. The frontend runs independently and reports when the backend is unavailable. See the [streaming guide](../streaming/README.md) to start the alert pipeline and API.
 
-The current machine has an older system Node. A project-local Node 22 is installed in the ignored `.runtime/` directory. In a fresh terminal, use:
+The Next.js server proxies `/api/status`, `/api/alerts`, `/api/alerts/stream` and `/api/investigations` to FastAPI. `AML_API_INTERNAL_URL` defaults to `http://127.0.0.1:8000` locally and points to `http://api:8000` in Compose. An optional `AML_API_TOKEN` is forwarded server-side.
 
-```bash
-cd frontend
-export PATH="$PWD/.runtime/node_modules/.bin:$PATH"
-node --version
-npm run dev
-```
+Routes are `/` and `/alerts` for live alerts, `/graph` for the synthetic preview, `/investigator` for the investigation placeholder, and `/models` for the unconnected model registry. The API returns completed tool events and reports synchronously; it does not stream Agent progress or persist cases.
 
-If that local runtime is absent and you cannot use an existing Node version manager, bootstrap it with:
-
-```bash
-npm install --prefix .runtime --no-save --package-lock=false node@22
-export PATH="$PWD/.runtime/node_modules/.bin:$PATH"
-npm ci
-```
-
-This leaves the system Node and Python/uv environment unchanged. The npm lockfile pins frontend dependencies.
-
-## Run with Docker Compose
-
-From the repository root, start just the frontend (no local Node installation required):
-
-```bash
-docker compose up -d --build --wait frontend
-```
-
-Open <http://localhost:3000>. The frontend has its own build context and runs a production Next.js standalone server as the non-root `node` user. Build-time dependencies stay in the build stage; host `node_modules`, `.next`, local runtimes and `.env` files are excluded. The image does not currently contain a `public/` directory because the app has no public assets; add a Dockerfile copy for it when introducing those assets.
-
-Start all existing long-running services, including the frontend:
-
-```bash
-docker compose up -d --build --wait
-docker compose ps
-```
-
-`producer` and `flink-submit` remain on-demand `etl` profile services in the same Compose file. They need an explicit replay/submission command rather than running on every startup. Starting the Flink cluster does not submit a feature job.
-
-Stop and remove this project's containers and network, preserving stored data:
-
-```bash
-docker compose down
-```
-
-Frontend source changes require rebuilding the image. For hot reload while editing, use the local `npm run dev` workflow above. The frontend intentionally has no `depends_on` backend dependency: it displays disconnected status when the API is unavailable and does not start Docker services itself.
-
-## Configured surfaces and routes
-
-- `/`: live rule alerts, triggering transaction details, and manual sender/recipient investigation.
-- `/alerts`: the same live alert view.
-- `/graph`: graph placeholder with an **opt-in, visibly labeled synthetic renderer preview**, node/edge selection, directed edges, pan/zoom/reset and an accessible transaction list.
-- `/investigator`: workspace placeholder with a disabled free-form prompt and a link to manually investigate from live alerts.
-- `/models`: MLflow integration placeholder, not a working model registry.
-
-The shell contains reusable `GlassPanel` and shadcn/ui-style `Button` components. `globals.css` defines dark navy/graphite tokens, selective blur, ambient gradients, opaque content surfaces, focus styles, and reduced-motion/transparency fallbacks. The header's opaque-surface and reduced-motion controls last across client-side navigation; OS preferences are also respected. Controls reset on a full reload.
-
-`components.json` configures shadcn/ui's Tailwind v4 CSS path and `@/` aliases. Add actual UI primitives when needed, for example:
-
-```bash
-npx shadcn@latest add dialog table input
-```
-
-Recharts is installed for future real monitoring charts; no fake metrics are displayed. Sigma loads client-side and only after selecting the synthetic preview. Its renderer is destroyed on unmount; a transaction list remains available when WebGL is unavailable. No force-layout worker or large graph is started in the background.
-
-## Backend boundary
-
-The Next.js server proxies its alert and investigation requests to the implemented FastAPI service. In Compose, `AML_API_INTERNAL_URL` points to `http://api:8000`; for local Next.js development it defaults to `http://127.0.0.1:8000`. An optional `AML_API_TOKEN` stays on the server and is forwarded to FastAPI, not embedded in browser code. See the [streaming guide](../streaming/README.md#live-alerts-and-manual-investigation) for setup and rule limits. MLflow remains unconnected.
-
-FastAPI supplies `/api/status`, `/api/alerts`, `/api/alerts/stream` and `/api/investigations`. The stream reports stored alerts, not every transaction. The investigation request is synchronous and returns actual tool events only after execution; it does not claim live Agent event streaming or persistent cases.
-
-The product requirements in local `AGENTS.md` cover all five intended screens, Agent/graph/evidence linking, accessibility and demo labeling. Full screens, graph neighborhood APIs, durable cases, automated alert dispatch, MLflow metrics and multi-user authentication remain future work.
-
-## Verification
-
-```bash
-npm run lint
-npm run build
-npm run typecheck
-```
-
-For browser checks, visit all five routes, switch opaque surfaces and reduced motion, inspect desktop/tablet navigation, and load/unload the synthetic graph. Confirm the alert view distinguishes a stopped backend from an empty result and that investigations are launched only by the analyst. Ensure the graph preview remains visibly labeled synthetic.
-
-Reference: [Next.js installation](https://nextjs.org/docs/app/getting-started/installation), [shadcn/ui manual setup](https://ui.shadcn.com/docs/installation/manual), [Sigma.js quickstart](https://www.sigmajs.org/get-started/quickstart/), [Motion accessibility configuration](https://motion.dev/docs/react-motion-config).
+For development checks run `npm run lint`, `npm run typecheck` and `npm run build`. Opaque-surface and reduced-motion controls are available in the application; the graph preview also provides a keyboard-accessible transaction list.

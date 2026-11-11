@@ -1,48 +1,19 @@
 # Graph Investigation Agent for AML
 
-An evidence-grounded financial crime investigation project combining transaction analytics, temporal graphs, machine-learning risk signals and adaptive Agent investigations.
+An evidence-grounded investigation prototype for transaction monitoring and temporal graph analysis. Analytical tools compute findings; the LangGraph Agent chooses bounded investigative steps. An indicator is not proof of financial crime.
 
-**The Agent decides what to investigate; analytical tools compute what the data shows.** Suspicious patterns are indicators for investigation, not confirmed financial crime.
+## Current capabilities
 
-## Current status
+- Replay IBM AML CSV transactions through Kafka; archive raw events and duplicate conflicts in PostgreSQL.
+- Compute hourly account features and illustrative alerts with Flink. The web UI shows each alert's triggering transaction and lets an analyst choose the sender or recipient for investigation.
+- Query account transactions and investigate bounded graph neighborhoods, fan-in/out, reciprocal flows, cycles and chronological paths. On-demand investigation works with Kafka and Flink stopped.
+- Run an experimental LangGraph investigation through the CLI or manually from an alert. Evidence includes transaction references and limitations.
 
-The repository provides an IBM AML transaction replay pipeline, Kafka ingestion, PostgreSQL persistence, Flink account features and alerts, and a web frontend for reviewing those alerts.
+Trained ML scoring, durable case management, automatic alert dispatch, production graph views and MLflow integration remain planned. The graph preview is explicitly synthetic. See the [Agent guide](investigation/AGENT.md) and [investigation tools](investigation/README.md).
 
-| Component | Implemented scope |
-| --- | --- |
-| Transaction replay | Python CSV producer, stable IDs, source provenance, configurable rate and event-time sorting |
-| Persistence | Raw transactions, duplicate/conflict tracking and Kafka provenance in PostgreSQL |
-| Streaming features | Hourly inflow/outflow, counts and distinct counterparties; event-time windows and late-event handling |
-| Investigation queries | PostgreSQL transaction details, account summaries and counterparties with source evidence |
-| Graph investigation tools | Bounded local transaction graphs, fan-in/out, reciprocal flows, cycles and temporal paths |
-| Live alerts | Flink early fan-in/out and large-transaction threshold alerts persisted in PostgreSQL and streamed to the frontend |
-| Web frontend | Live alert list and transaction details, manual sender/recipient investigation, plus an opt-in synthetic graph preview |
-| Investigation Agent | Experimental bounded LangGraph CLI and a synchronous API invoked manually from an alert; persistent case management remains planned |
-| Risk and model management | Planned: trained ML scoring, automated alert dispatch and MLflow integration |
+## Run the streaming demo
 
-The alert view is a local demonstration with configurable example thresholds, not a production monitoring system. Other dashboard metrics, graph APIs and model metrics remain unavailable. See the [streaming guide](streaming/README.md#live-alerts-and-manual-investigation), [investigation query guide](investigation/README.md), and [Agent guide](investigation/AGENT.md).
-
-## Target architecture
-
-[![Target architecture for streaming monitoring and on-demand investigation](image/aml-investigation-architecture.png)](image/aml-investigation-architecture.png)
-
-The diagram includes planned components. Streaming monitoring will trigger selected, bounded investigations; on-demand investigation is intended to work independently of Kafka and Flink. Numerical findings and graph paths must come from analytical tools with traceable source evidence.
-
-## Quick start
-
-### Frontend
-
-With Docker Desktop running, start the frontend from the repository root:
-
-```bash
-docker compose up -d --build --wait frontend
-```
-
-Open [localhost:3000](http://localhost:3000). This starts the frontend alone. For Node 22 development and hot reload, see the [frontend guide](frontend/README.md).
-
-### Streaming demo
-
-Place the IBM LI Small CSV at `dataset/LI-Small/LI-Small_Trans.csv`. Datasets and local service data are ignored by Git.
+With Docker Desktop running, place the IBM CSV at `dataset/LI-Small/LI-Small_Trans.csv`, then run:
 
 ```bash
 docker compose up -d --build --wait raw-writer kafka-ui flink-jobmanager flink-taskmanager api frontend
@@ -53,19 +24,13 @@ docker compose run --rm producer \
   --bootstrap-servers kafka:29092 --sort-event-time --rate 500 --limit 5000
 ```
 
-Open [monitoring :3000](http://localhost:3000), [Kafka UI :8080](http://localhost:8080) or [Flink UI :8081](http://localhost:8081). Submit only one live feature job. Alerts can fire on individual events before a window closes; hourly feature results still require event time to advance. Rules and setup are described in the [streaming guide](streaming/README.md#live-alerts-and-manual-investigation).
+Open [monitoring](http://localhost:3000), [Kafka UI](http://localhost:8080) or [Flink UI](http://localhost:8081). Set `DS_key` in the root `.env` for analyst-initiated investigations. The rules use illustrative thresholds; event-time windows, replay and reset instructions are in the [streaming guide](streaming/README.md).
 
-For replay modes, database inspection, validation, checkpoints and data resets, see the [streaming development guide](streaming/README.md) and [Flink guide](flink/README.md).
+Run `docker compose stop` to stop services while preserving their data in `volume/`. To run the frontend alone, use `docker compose up -d --build --wait frontend`; see the [frontend guide](frontend/README.md) for local development.
 
-```bash
-docker compose stop
-```
+## On-demand investigation
 
-This stops the services while keeping containers and data under `volume/`.
-
-### On-demand investigation Agent
-
-The experimental LangGraph CLI investigates transactions already stored in PostgreSQL. Kafka and Flink are not required for this mode. Configure the PostgreSQL connection with `PGHOST`, `PGPORT`, `PGDATABASE`, `PGUSER` and `PGPASSWORD`, and put the DeepSeek API key in the root `.env` as `DS_key`.
+Configure `PGHOST`, `PGPORT`, `PGDATABASE`, `PGUSER`, `PGPASSWORD` and `DS_key`, then use existing account identifiers and a half-open event-time range:
 
 ```bash
 uv run python -m graph_investigation_agent_for_aml.agent.cli \
@@ -75,25 +40,8 @@ uv run python -m graph_investigation_agent_for_aml.agent.cli \
   --format markdown --output report.md
 ```
 
-Use identifiers and a half-open event-time range that exist in the database. The Agent chooses among bounded, predefined analysis tools; transaction findings come from the database and analytical functions. Patterns are indicators for review, not conclusions of criminal activity. See the [Agent guide](investigation/AGENT.md) for budgets, report formats, evaluation and limitations.
+The [Agent guide](investigation/AGENT.md) covers budgets and output. Streaming results may be revised for eligible late events; very late events are recorded separately. Flink deduplication state grows with unique IDs, and the pipeline does not claim end-to-end exactly-once delivery.
 
-## Project layout
+## Layout
 
-```text
-frontend/       Next.js application, UI components and frontend guide
-src/            Python transaction producer, raw writer, investigation Agent and API
-flink/          DataStream job, bounded SQL job and database schema
-scripts/        Validation and development reset utilities
-tests/          Python tests and synthetic streaming fixtures
-streaming/      Detailed streaming operations guide
-investigation/  Query, graph-analysis and Agent CLI guides
-compose.yaml    Local services and on-demand replay/job submission
-```
-
-## Development roadmap
-
-1. Persist investigation cases, add review workflow and expand the evidence/graph interface.
-2. Introduce evaluated ML risk scoring and deduplicated alert dispatch.
-3. Evaluate detection, evidence quality, throughput and investigation cost.
-
-Current streaming features are aggregates, not proof of laundering. The demonstration retains first-seen transaction IDs in Flink state, so state grows with unique IDs; very late events are recorded separately. No end-to-end exactly-once guarantee is claimed. See the streaming guide for replay and recovery limits.
+`src/` contains the Python producer, persistence, investigation tools, Agent and API; `flink/` contains streaming jobs and schema; `frontend/` contains the Next.js application; `scripts/` contains the development reset utility. The [architecture diagram](image/aml-investigation-architecture.png) includes planned components.

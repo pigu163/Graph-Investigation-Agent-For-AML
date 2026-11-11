@@ -1,6 +1,6 @@
 """Replay IBM AML Small transaction CSV files to Kafka.
 
-Quick smoke test from the repository root, while Kafka is running:
+Replay from the repository root while Kafka is running:
 
     docker compose run --rm producer \
       --file /dataset/LI-Small/LI-Small_Trans.csv \

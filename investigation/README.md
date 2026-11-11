@@ -67,21 +67,6 @@ ID samples are capped at 20 per group with `evidence_truncated` signaling more.
 To inspect all supporting records, page through the matching account transactions
 and check the relevant counterparty/direction/currency.
 
-## Verification
-
-Use the actual pipeline with `tests/fixtures/streaming-boundaries.csv` and a
-5,000-row LI-Small replay, then set `AML_TEST_DATABASE_URL` to the corresponding
-disposable database and run `pytest tests/test_investigation.py`. The tests
-check self-transfers, differing paid/received currencies, decimal precision,
-half-open time boundaries, pagination, scoped account and transaction IDs,
-bounded evidence, label exclusion and actual IBM transaction retrieval. The
-test-created evidence-limit rows are rolled back.
-
-The live streaming job can revise window features after late events; these
-functions query archived transactions rather than assuming window features are
-complete. The `transactions` table does not currently provide an account/time
-index by default; measure query performance and add indexes if the dataset size warrants it.
-
 ## Bounded graph and temporal investigation
 
 `graph_investigation.py` expands a local directed NetworkX `MultiDiGraph` in
@@ -145,10 +130,3 @@ Optional [account/time index definitions](indexes.sql) are provided for
 measured workloads. They are not installed automatically: index creation can
 affect write throughput and storage. Compare `EXPLAIN (ANALYZE, BUFFERS)` on
 representative account degrees and time windows before adopting them.
-
-For integration testing, set `AML_GRAPH_TEST_DATABASE_URL` to a disposable
-PostgreSQL database named `aml_graph_test` and run
-`pytest tests/test_graph_investigation.py`. The fixture writes synthetic graph
-records and, when available, 1,000 real LI-Small CSV rows into that database;
-never point this variable at a database containing user data. Without it, the
-pure graph tests still run and database tests are skipped.

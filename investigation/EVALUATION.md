@@ -1,6 +1,6 @@
 # Agent evaluation: synthetic pilot
 
-These cases use the first six rows of `tests/fixtures/graph-investigation.csv`, replayed through Kafka into an isolated PostgreSQL database. A Flink job was submitted; Kafka and Flink were stopped before investigation. The labels in `tests/fixtures/agent-cases.json` describe toy indicators, not criminal activity. All test containers and temporary data were removed afterwards.
+This historical pilot used six synthetic transaction rows replayed into an isolated PostgreSQL database. Its labels describe toy indicators, not criminal activity. The original fixtures are no longer in the repository.
 
 ## Fixed baseline checks
 
@@ -44,5 +44,5 @@ All four reports stopped at the model-request budget after seven completed tool
 actions, with zero evidence-validation errors. A and B's positive findings had
 exactly the labeled transaction-ID sets; all eight labeled indicator states across
 A–D matched the fixture labels. The fixed baseline completed normally for every
-case. This is a reproducible integration regression, not evidence of production
+case. This historical run is not evidence of production
 accuracy or a claim that the indicators establish criminal conduct.
