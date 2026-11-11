@@ -19,14 +19,34 @@ The diagram includes planned components as well as the current implementation.
 
 ## Graph and temporal features
 
-The investigation tools build a bounded, directed account transaction graph with NetworkX. Parallel transfers retain their transaction IDs, timestamps, amounts and currencies.
+The investigation tools expand a bounded NetworkX directed multigraph for the selected account and time window. An account is a node and each transaction is a directed edge; parallel transfers remain separate and retain their IDs, timestamps, amounts and currencies. The following features describe the **returned subgraph**, not necessarily the entire transaction history.
 
-- **Account connectivity:** incoming and outgoing transaction counts, distinct senders and receivers, mutual counterparties, and inbound/outbound amounts grouped by currency. Transaction counts include self-transfers; distinct external counterparties exclude them.
-- **Fan-in and fan-out:** distinct external senders or receivers and their supporting transactions within the selected investigation window.
-- **Reciprocal flows and rapid pass-through:** incoming/outgoing transaction pairs, time differences and comparable-currency amounts. Reciprocal pairs share a counterparty; pass-through pairs are ordered in time.
-- **Cycles and temporal paths:** short directed cycles and chronological multi-hop outgoing paths, with transaction evidence and timing/amount comparisons. Equal timestamps leave order uncertain.
+| Graph feature | How it is calculated |
+| --- | --- |
+| Incoming / outgoing transaction count | Count edges entering / leaving the target account. Parallel transactions count separately; a self-transfer counts once in each direction. |
+| Incoming / outgoing neighbors | Count distinct sender / receiver accounts connected to the target, excluding the target itself. |
+| Mutual neighbors | Count distinct accounts in both the incoming and outgoing neighbor sets, excluding the target. |
+| Incoming / outgoing amount | Sum amounts on incoming / outgoing edges by currency: incoming uses the received amount and receiving currency; outgoing uses the paid amount and payment currency. No currency conversion is performed. |
+| Fan-in / fan-out | Compare the number of distinct external senders / receivers with `min_counterparties` (default: 2). The result also includes the counterparties and supporting transactions. |
 
-Flink separately computes hourly incoming/outgoing counts and amounts, net inflow and distinct senders/receivers per account and currency. Graph expansion and search are bounded; truncation is reported. These patterns are indicators, and a path or temporal match does not prove the same funds moved.
+For example, if B sends A two transactions, C sends A one, and A sends B one, A has three incoming transactions, two incoming neighbors, one outgoing neighbor and one mutual neighbor (B). If A also transfers to itself, both transaction counts increase by one, but the external neighbor counts stay the same.
+
+| Temporal pattern | How it is calculated |
+| --- | --- |
+| Reciprocal flow | Pair an incoming and outgoing transaction involving the same external counterparty when the absolute time difference is within the configured limit (default: 24 hours). Either direction can occur first. |
+| Rapid pass-through | Pair an incoming transaction with a subsequent outgoing transaction when `0 ≤ outgoing time − incoming time ≤ max_delay` (default: 1 hour). Same-timestamp order is uncertain. |
+| Directed cycle | Search for a short directed loop containing the target (default: up to 3 edges). Rotate the transaction sequence to check chronological order and adjacent time gaps (default: 24 hours); report structural cycles even when their timing is not feasible. |
+| Temporal path | Search simple outgoing paths from the target with at least two transactions (default: up to 3 edges). Each next transaction must occur no earlier than the previous one and within the configured gap (default: 24 hours). |
+
+Pairs and paths include transaction evidence and compare adjacent amounts only when the incoming receiving currency matches the outgoing payment currency. Equal timestamps do not establish order. Graph expansion and searches have node, edge, hop, result and search limits; truncation is reported, so missing results from a truncated search are inconclusive. A connection or temporal match does not prove that the same funds moved or that a crime occurred. See the [investigation tools guide](investigation/README.md) for details.
+
+Flink computes a separate set of **hourly event-time aggregates** by dataset, account and currency:
+
+| Streaming feature | How it is calculated |
+| --- | --- |
+| Incoming / outgoing count and amount | Count incoming / outgoing movements and sum their received / paid amounts in the corresponding currency. Self-transfers contribute in both directions. |
+| Net inflow | Incoming amount minus outgoing amount for the same account, currency and window. |
+| Fan-in / fan-out | Count distinct external senders / receivers in the window, excluding self-transfers. |
 
 ## Run the streaming demo
 
