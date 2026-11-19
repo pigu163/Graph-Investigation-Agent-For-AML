@@ -56,4 +56,4 @@ docker compose logs --tail 50 raw-writer
 docker compose stop
 ```
 
-Stopping preserves containers and data under `volume/`. To delete this project's transaction data, alert and feature rows, Kafka progress and Flink state, stop producers first and run `python scripts/reset_streaming.py --yes`; add `--stop` to leave services stopped. This reset is destructive. It preserves the source CSVs and database schema. Submit a new Flink job explicitly when resuming.
+Stopping preserves containers and data under `volume/`. To delete this project's transaction data, alerts, features, scores, investigation cases and queue entries, Kafka progress and Flink state, stop producers first and run `python scripts/reset_streaming.py --yes`; add `--stop` to leave services stopped. This reset is destructive. It preserves the source CSVs and database schema. Submit a new Flink job explicitly when resuming.

@@ -21,10 +21,10 @@ docker compose --profile scoring up -d --build scorer
 
 Training uses HI-Small labels and time-ordered splits. The model outputs a ranking score, not a calibrated probability. The scorer uses previously archived transactions and revises scores when additional earlier transactions arrive; saved reports retain their original score snapshot. The LI-Small stream omits labels. Metrics in the generated `metrics.json` cover all held-out transactions; ranking within the rule-alert pool remains to be evaluated.
 
-To register the trained files with an existing MLflow tracking server, use a Python environment with MLflow installed:
+To register the trained files with an existing MLflow tracking server, use the `tracking` extra:
 
 ```bash
-python src/graph_investigation_agent_for_aml/scoring/register_mlflow.py \
+uv run --extra tracking python -m graph_investigation_agent_for_aml.scoring.register_mlflow \
   --model-dir dataset/models/hi-small --tracking-uri http://localhost:5000
 ```
 

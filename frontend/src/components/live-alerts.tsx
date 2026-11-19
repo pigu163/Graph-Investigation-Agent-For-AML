@@ -87,10 +87,21 @@ export function LiveAlerts() {
     return () => { controller.abort(); clearInterval(timer); stream.close(); };
   }, []);
 
+  function resetCase() {
+    setCaseId(undefined);
+    setReport(undefined);
+    setGraph(undefined);
+    setGraphError("");
+    setTransactionId(null);
+    setDecision("accepted");
+    setNote("");
+    setCaseStatus("");
+  }
+
   async function investigate(party: "sender" | "recipient") {
     if (!selected) return;
-    setSelectedId(selected.alert_id); setRunning(true); setError(""); setReport(undefined);
-    setCaseId(undefined); setGraph(undefined); setGraphError(""); setTransactionId(null);
+    setSelectedId(selected.alert_id); setRunning(true); setError("");
+    resetCase();
     try {
       const response = await fetch("/api/backend/investigations", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ alert_id: selected.alert_id, party }) });
       const data = await response.json();
@@ -161,8 +172,8 @@ export function LiveAlerts() {
   }
 
   async function investigateOnDemand(event: React.FormEvent) {
-    event.preventDefault(); setRunning(true); setError(""); setReport(undefined);
-    setCaseId(undefined); setGraph(undefined); setGraphError(""); setTransactionId(null);
+    event.preventDefault(); setRunning(true); setError("");
+    resetCase();
     try {
       const response = await fetch("/api/backend/investigations/on-demand", {
         method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(request),

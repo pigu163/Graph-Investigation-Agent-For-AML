@@ -40,7 +40,9 @@ def wait_for_transactions_table():
 
 def reset(stop=False):
     # Stop readers first: neither Kafka offsets nor checkpoints may restore old data.
-    compose("stop", "api", "raw-writer", "kafka-ui", "flink-taskmanager", "flink-jobmanager")
+    compose("--profile", "dispatch", "--profile", "scoring", "stop",
+            "api", "dispatcher", "scorer", "raw-writer", "kafka-ui",
+            "flink-taskmanager", "flink-jobmanager")
     compose("up", "-d", "--wait", "kafka", "postgres")
     groups = set(kafka("kafka-consumer-groups", "--list").splitlines())
     for group in ("aml-raw-writer-v1", "aml-flink-features-v1", "aml-flink-features-v2"):
@@ -64,7 +66,8 @@ def reset(stop=False):
     sql((ROOT / "flink/schema.sql").read_text())
     tables = set(sql("SELECT tablename FROM pg_tables WHERE schemaname='public';").splitlines())
     existing_tables = [
-        table for table in ("risk_alerts", "flink_transaction_conflicts", "late_transaction_movements",
+        table for table in ("investigation_queue", "investigation_cases", "transaction_scores",
+                            "risk_alerts", "flink_transaction_conflicts", "late_transaction_movements",
                             "transaction_conflicts", "transactions", "account_window_features")
         if table in tables
     ]
