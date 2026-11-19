@@ -9,7 +9,28 @@ An evidence-grounded investigation prototype for transaction monitoring and temp
 - Query account transactions and investigate bounded graph neighborhoods, fan-in/out, reciprocal flows, cycles and chronological paths. On-demand investigation works with Kafka and Flink stopped.
 - Run an experimental LangGraph investigation through the CLI or manually from an alert. Evidence includes transaction references and limitations.
 
-Trained ML scoring, durable case management, automatic alert dispatch, production graph views and MLflow integration remain planned. The graph preview is explicitly synthetic. See the [Agent guide](investigation/AGENT.md) and [investigation tools](investigation/README.md).
+The web application saves investigation cases and reports, and can show the graph evidence saved with a report. An optional local XGBoost scorer ranks alert-triggering transactions using an HI-Small model. The standalone graph preview uses synthetic data. Set `MLFLOW_TRACKING_URI` for the API to display registered models and their run metrics on the models page. The optional dispatcher runs investigations explicitly queued by an analyst. See the [Agent guide](investigation/AGENT.md) and [investigation tools](investigation/README.md).
+
+To train the optional scorer, run:
+
+```bash
+uv run --extra ml python -m graph_investigation_agent_for_aml.scoring.train \
+  --input dataset/HI-Small/HI-Small_Trans.csv --output dataset/models/hi-small
+docker compose --profile scoring up -d --build scorer
+```
+
+Training uses HI-Small labels and time-ordered splits. The model outputs a ranking score, not a calibrated probability. The scorer uses previously archived transactions and revises scores when additional earlier transactions arrive; saved reports retain their original score snapshot. The LI-Small stream omits labels. Metrics in the generated `metrics.json` cover all held-out transactions; ranking within the rule-alert pool remains to be evaluated.
+
+To register the trained files with an existing MLflow tracking server, use a Python environment with MLflow installed:
+
+```bash
+python src/graph_investigation_agent_for_aml/scoring/register_mlflow.py \
+  --model-dir dataset/models/hi-small --tracking-uri http://localhost:5000
+```
+
+The registered artifact is the XGBoost JSON file. The local scorer continues to load its configured file independently of the registry.
+
+After initializing the database schema, start the optional queue worker with `docker compose --profile dispatch up -d --build dispatcher`. Analysts choose the sender or recipient before queueing an alert. Duplicate alert and party pairs share one queue entry. The worker processes queued entries by priority, one investigation at a time; interrupted entries are marked failed for review.
 
 ## Architecture
 

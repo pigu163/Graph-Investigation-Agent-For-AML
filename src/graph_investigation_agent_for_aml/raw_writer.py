@@ -39,7 +39,7 @@ CREATE TABLE IF NOT EXISTS transactions (
     amount_paid NUMERIC NOT NULL CHECK (amount_paid >= 0),
     payment_currency TEXT NOT NULL,
     payment_format TEXT NOT NULL,
-    is_laundering SMALLINT NOT NULL CHECK (is_laundering IN (0, 1)),
+    is_laundering SMALLINT CHECK (is_laundering IN (0, 1)),
     ingested_at TIMESTAMPTZ NOT NULL,
     kafka_topic TEXT NOT NULL,
     kafka_partition INTEGER NOT NULL,
@@ -55,6 +55,7 @@ ALTER TABLE transactions ADD COLUMN IF NOT EXISTS source_dataset TEXT;
 ALTER TABLE transactions ADD COLUMN IF NOT EXISTS source_file TEXT;
 ALTER TABLE transactions ADD COLUMN IF NOT EXISTS source_row BIGINT;
 ALTER TABLE transactions ADD COLUMN IF NOT EXISTS event_time_kind TEXT;
+ALTER TABLE transactions ALTER COLUMN is_laundering DROP NOT NULL;
 """
 
 # Retain the first conflicting message at each Kafka position for investigation.
@@ -75,7 +76,7 @@ BUSINESS_FIELDS = (
     "source_dataset", "source_file", "source_row", "event_time_kind", "event_time",
     "source_bank", "source_account", "destination_bank", "destination_account",
     "amount_received", "receiving_currency", "amount_paid", "payment_currency",
-    "payment_format", "is_laundering",
+    "payment_format",
 )
 
 
@@ -106,6 +107,7 @@ ON CONFLICT (transaction_id) DO NOTHING
 
 def transaction_values(event: dict) -> dict:
     """Validate the message and convert JSON values to database values."""
+    event = {key: value for key, value in event.items() if key != "is_laundering"}
     values = dict(event)
     for name in (
         "transaction_id", "source_bank", "source_account", "destination_bank",
@@ -131,8 +133,7 @@ def transaction_values(event: dict) -> dict:
             raise ValueError(f"{name} must be finite and nonnegative")
         values[name] = amount
 
-    if type(event["is_laundering"]) is not int or event["is_laundering"] not in (0, 1):
-        raise ValueError("is_laundering must be 0 or 1")
+    values["is_laundering"] = None
     values["event_time"] = datetime.strptime(event["event_time"], "%Y/%m/%d %H:%M")
     values["ingested_at"] = datetime.fromisoformat(event["ingested_at"])
     if values["ingested_at"].utcoffset() is None:
@@ -167,6 +168,8 @@ def main() -> None:
         with psycopg.connect(autocommit=True, connect_timeout=10) as connection:
             connection.execute(CREATE_TABLE)
             connection.execute(ADD_SOURCE_COLUMNS)
+            connection.execute("""CREATE INDEX IF NOT EXISTS idx_transactions_sender_history
+                                  ON transactions (source_dataset, source_bank, source_account, payment_currency, event_time)""")
             connection.execute(CREATE_CONFLICT_TABLE)
             consumer.subscribe([topic])
             logger.info("Reading %s into PostgreSQL transactions", topic)

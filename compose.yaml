@@ -28,8 +28,43 @@ services:
       PGUSER: aml_user
       PGPASSWORD: aml_local_dev
       AML_FLINK_REST_URL: http://flink-jobmanager:8081
+      MLFLOW_TRACKING_URI: ${MLFLOW_TRACKING_URI:-}
       AML_API_TOKEN: ${AML_API_TOKEN:-}
       DS_key: ${DS_key:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  dispatcher:
+    profiles: ["dispatch"]
+    image: aml-api:local
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    command: ["python", "-m", "graph_investigation_agent_for_aml.dispatcher"]
+    environment:
+      PGHOST: postgres
+      PGDATABASE: aml_db
+      PGUSER: aml_user
+      PGPASSWORD: aml_local_dev
+      DS_key: ${DS_key:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  scorer:
+    build:
+      context: .
+      dockerfile: Dockerfile.scorer
+    image: aml-scorer:local
+    profiles: [scoring]
+    environment:
+      PGHOST: postgres
+      PGDATABASE: aml_db
+      PGUSER: aml_user
+      PGPASSWORD: aml_local_dev
+    volumes:
+      - ./dataset/models/hi-small:/models:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -213,7 +248,7 @@ services:
       AML_FAN_IN_THRESHOLD: ${AML_FAN_IN_THRESHOLD:-10}
       AML_FAN_OUT_THRESHOLD: ${AML_FAN_OUT_THRESHOLD:-10}
       AML_LARGE_AMOUNT_THRESHOLD: ${AML_LARGE_AMOUNT_THRESHOLD:-100000}
-      AML_LARGE_AMOUNT_CURRENCY: ${AML_LARGE_AMOUNT_CURRENCY:-USD}
+      AML_LARGE_AMOUNT_CURRENCY: ${AML_LARGE_AMOUNT_CURRENCY:-US Dollar}
       AML_ALERT_RULE_VERSION: ${AML_ALERT_RULE_VERSION:-demo-v1}
       FLINK_PROPERTIES: |
         jobmanager.rpc.address: flink-jobmanager

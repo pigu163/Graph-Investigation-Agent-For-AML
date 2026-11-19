@@ -17,19 +17,21 @@ docker compose run --rm producer \
 
 Open [monitoring](http://localhost:3000), [Kafka UI](http://localhost:8080), or [Flink UI](http://localhost:8081). Submit only one live job. `--limit` selects the first source rows before sorting; IDs preserve the original row numbers. Full-file sorting uses temporary disk space. IBM event timestamps have no timezone, and same-minute events do not have a known order.
 
-Alerts are stored in `risk_alerts`. The UI displays the trigger transaction and enables an investigation after Raw Writer archives it. Each manually initiated investigation covers the preceding 24 hours, allows up to three model calls, and returns a synchronous report without saving a case. Set `DS_key` in the root `.env` to enable it. Optionally set the same `AML_API_TOKEN` for the API and server-side frontend proxy; this local arrangement is not multi-user authentication.
+Alerts are stored in `risk_alerts`. The UI displays the trigger transaction and enables an investigation after Raw Writer archives it. Each manually initiated alert investigation covers the preceding 24 hours, allows up to three model calls, and saves its case and synchronous report. Set `DS_key` in the root `.env` to enable it. Optionally set the same `AML_API_TOKEN` for the API and server-side frontend proxy; this local arrangement is not multi-user authentication.
 
-Default rules are illustrative: ten distinct senders, ten distinct receivers, or 100000 USD paid. Configure these before submitting the job, and change the rule version when changing a rule:
+Default rules are illustrative: ten distinct senders, ten distinct receivers, or 100000 US Dollar paid. Configure these before submitting the job, and change the rule version when changing a rule:
 
 ```text
 AML_FAN_IN_THRESHOLD=10
 AML_FAN_OUT_THRESHOLD=10
 AML_LARGE_AMOUNT_THRESHOLD=100000
-AML_LARGE_AMOUNT_CURRENCY=USD
+AML_LARGE_AMOUNT_CURRENCY=US Dollar
 AML_ALERT_RULE_VERSION=demo-v1
 ```
 
 Fan alerts fire at threshold crossing; their count is not continuously updated and the displayed transaction is the crossing event. The API streams the latest 100 persisted alerts, polling roughly once per second per client. Resubmitting a fresh job reads retained Kafka history and may regenerate historical alerts.
+
+To pace replay by historical gaps, replace `--sort-event-time --rate 500` with `--speed 3600`. This automatically sorts the selected records by event time. One historical hour takes one wall-clock second at this speed. Flink still receives the original timestamps, and transactions in the same source minute are sent without a simulated gap. Omit `--limit` to replay the whole file.
 
 ## Event time and recovery
 

@@ -1,6 +1,10 @@
 .git
 .venv
 .env
+.env.*
+/.codex/
+/.codegraph/
+/todolist/
 __pycache__
 dataset
 volume

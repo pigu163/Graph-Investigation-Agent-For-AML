@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import math
 import sqlite3
 import tempfile
 import time
@@ -87,8 +88,6 @@ def build_event(path: Path, row_number: int, row: list[str]) -> dict:
         "amount_paid": row[7],
         "payment_currency": row[8],
         "payment_format": row[9],
-        # This label is for evaluation, not a detection feature.
-        "is_laundering": int(row[10]),
         "ingested_at": datetime.now(UTC).isoformat(),
     }
 
@@ -98,21 +97,28 @@ def main() -> None:
     parser.add_argument("--file", required=True, type=Path, help="Path to an IBM AML transaction CSV")
     parser.add_argument("--topic", default="aml-transactions")
     parser.add_argument("--bootstrap-servers", default="localhost:9092")
-    parser.add_argument("--rate", type=float, default=100, help="Transactions per second")
+    pacing = parser.add_mutually_exclusive_group()
+    pacing.add_argument("--rate", type=float, help="Transactions per second (default: 100)")
+    pacing.add_argument("--speed", type=float, help="Replay original event-time gaps at this multiplier")
+    pacing.add_argument("--max-speed", action="store_true", help="Send as fast as Kafka accepts events")
     parser.add_argument("--limit", type=int, help="Maximum number of rows to send")
     parser.add_argument("--sort-event-time", action="store_true",
                         help="Sort the selected CSV prefix by event time, preserving original IDs")
     args = parser.parse_args()
 
     # Reject invalid settings before opening the CSV or connecting to Kafka.
-    if args.rate <= 0 or (args.limit is not None and args.limit <= 0):
-        parser.error("--rate and --limit must be greater than zero")
+    rate = 100 if args.rate is None else args.rate
+    for flag, value in (("--rate", rate), ("--speed", args.speed)):
+        if value is not None and (not math.isfinite(value) or value <= 0):
+            parser.error(f"{flag} must be finite and greater than zero")
+    if args.limit is not None and args.limit <= 0:
+        parser.error("--limit must be greater than zero")
 
     producer = Producer({"bootstrap.servers": args.bootstrap_servers})
     delivered = 0
     failures: list[str] = []
-    interval = 1 / args.rate
-    next_send = time.monotonic()
+    first_event_time = None
+    started = time.monotonic()
 
     def on_delivery(error: KafkaError | None, message: object) -> None:
         # Kafka calls this when it confirms or rejects a queued message.
@@ -120,26 +126,39 @@ def main() -> None:
             failures.append(str(error))
 
     # Positional columns preserve the CSV's repeated Account headers.
-    for row_number, row in read_rows(args.file, args.limit, args.sort_event_time):
+    for row_number, row in read_rows(args.file, args.limit, args.sort_event_time or args.speed is not None):
         if delivered == 0:
             # Sorting may take time; start the rate clock only when rows are ready.
-            next_send = time.monotonic()
+            started = time.monotonic()
+        if args.max_speed:
+            delay = 0
+        elif args.speed is None:
+            delay = delivered / rate
+        else:
+            event_time = datetime.strptime(row[0], "%Y/%m/%d %H:%M")
+            if first_event_time is None:
+                first_event_time = event_time
+            delay = (event_time - first_event_time).total_seconds() / args.speed
+        remaining_delay = started + delay - time.monotonic()
+        if remaining_delay > 0:
+            time.sleep(remaining_delay)
         event = build_event(args.file, row_number, row)
         # Use the transaction ID as the Kafka key for consistent partitioning.
-        producer.produce(
-            args.topic,
-            key=event["transaction_id"],
-            value=json.dumps(event).encode("utf-8"),
-            on_delivery=on_delivery,
-        )
+        while True:
+            try:
+                producer.produce(
+                    args.topic,
+                    key=event["transaction_id"],
+                    value=json.dumps(event).encode("utf-8"),
+                    on_delivery=on_delivery,
+                )
+                break
+            except BufferError:
+                producer.poll(0.1)
+                if failures:
+                    raise RuntimeError(f"Kafka delivery failed: {failures[:3]}")
         producer.poll(0)
         delivered += 1
-        if args.limit is not None and delivered >= args.limit:
-            break
-
-        # Keep a steady rate in the selected replay order.
-        next_send += interval
-        time.sleep(max(0, next_send - time.monotonic()))
 
     # Wait for queued messages so the process does not exit before Kafka confirms them.
     remaining = producer.flush(30)
