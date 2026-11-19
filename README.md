@@ -9,67 +9,7 @@ An evidence-grounded investigation prototype for transaction monitoring and temp
 - Query account transactions and investigate bounded graph neighborhoods, fan-in/out, reciprocal flows, cycles and chronological paths. On-demand investigation works with Kafka and Flink stopped.
 - Run an experimental LangGraph investigation through the CLI or manually from an alert. Evidence includes transaction references and limitations.
 
-The web application saves investigation cases and reports, and can show the graph evidence saved with a report. An optional local XGBoost scorer ranks alert-triggering transactions using an HI-Small model. The standalone graph preview uses synthetic data. Set `MLFLOW_TRACKING_URI` for the API to display registered models and their run metrics on the models page. The optional dispatcher runs investigations explicitly queued by an analyst. See the [Agent guide](investigation/AGENT.md) and [investigation tools](investigation/README.md).
-
-To train the optional scorer, run:
-
-```bash
-uv run --extra ml python -m graph_investigation_agent_for_aml.scoring.train \
-  --input dataset/HI-Small/HI-Small_Trans.csv --output dataset/models/hi-small
-docker compose --profile scoring up -d --build scorer
-```
-
-Training uses HI-Small labels and time-ordered splits. The model outputs a ranking score, not a calibrated probability. The scorer uses previously archived transactions and revises scores when additional earlier transactions arrive; saved reports retain their original score snapshot. The LI-Small stream omits labels. Metrics in the generated `metrics.json` cover all held-out transactions; ranking within the rule-alert pool remains to be evaluated.
-
-To register the trained files with an existing MLflow tracking server, use the `tracking` extra:
-
-```bash
-uv run --extra tracking python -m graph_investigation_agent_for_aml.scoring.register_mlflow \
-  --model-dir dataset/models/hi-small --tracking-uri http://localhost:5000
-```
-
-The registered artifact is the XGBoost JSON file. The local scorer continues to load its configured file independently of the registry.
-
-After initializing the database schema, start the optional queue worker with `docker compose --profile dispatch up -d --build dispatcher`. Analysts choose the sender or recipient before queueing an alert. Duplicate alert and party pairs share one queue entry. The worker processes queued entries by priority, one investigation at a time; interrupted entries are marked failed for review.
-
-## Architecture
-
-[![Target architecture for streaming monitoring and on-demand investigation](image/aml-investigation-architecture.png)](image/aml-investigation-architecture.png)
-
-The diagram includes planned components as well as the current implementation.
-
-## Graph and temporal features
-
-The investigation tools expand a bounded NetworkX directed multigraph for the selected account and time window. An account is a node and each transaction is a directed edge; parallel transfers remain separate and retain their IDs, timestamps, amounts and currencies. The following features describe the **returned subgraph**, not necessarily the entire transaction history.
-
-| Graph feature | How it is calculated |
-| --- | --- |
-| Incoming / outgoing transaction count | Count edges entering / leaving the target account. Parallel transactions count separately; a self-transfer counts once in each direction. |
-| Incoming / outgoing neighbors | Count distinct sender / receiver accounts connected to the target, excluding the target itself. |
-| Mutual neighbors | Count distinct accounts in both the incoming and outgoing neighbor sets, excluding the target. |
-| Incoming / outgoing amount | Sum amounts on incoming / outgoing edges by currency: incoming uses the received amount and receiving currency; outgoing uses the paid amount and payment currency. No currency conversion is performed. |
-| Fan-in / fan-out | Compare the number of distinct external senders / receivers with `min_counterparties` (default: 2). The result also includes the counterparties and supporting transactions. |
-
-For example, if B sends A two transactions, C sends A one, and A sends B one, A has three incoming transactions, two incoming neighbors, one outgoing neighbor and one mutual neighbor (B). If A also transfers to itself, both transaction counts increase by one, but the external neighbor counts stay the same.
-
-| Temporal pattern | How it is calculated |
-| --- | --- |
-| Reciprocal flow | Pair an incoming and outgoing transaction involving the same external counterparty when the absolute time difference is within the configured limit (default: 24 hours). Either direction can occur first. |
-| Rapid pass-through | Pair an incoming transaction with a subsequent outgoing transaction when `0 ≤ outgoing time − incoming time ≤ max_delay` (default: 1 hour). Same-timestamp order is uncertain. |
-| Directed cycle | Search for a short directed loop containing the target (default: up to 3 edges). Rotate the transaction sequence to check chronological order and adjacent time gaps (default: 24 hours); report structural cycles even when their timing is not feasible. |
-| Temporal path | Search simple outgoing paths from the target with at least two transactions (default: up to 3 edges). Each next transaction must occur no earlier than the previous one and within the configured gap (default: 24 hours). |
-
-Pairs and paths include transaction evidence and compare adjacent amounts only when the incoming receiving currency matches the outgoing payment currency. Equal timestamps do not establish order. Graph expansion and searches have node, edge, hop, result and search limits; truncation is reported, so missing results from a truncated search are inconclusive. A connection or temporal match does not prove that the same funds moved or that a crime occurred. See the [investigation tools guide](investigation/README.md) for details.
-
-Flink computes a separate set of **hourly event-time aggregates** by dataset, account and currency:
-
-| Streaming feature | How it is calculated |
-| --- | --- |
-| Incoming / outgoing count and amount | Count incoming / outgoing movements and sum their received / paid amounts in the corresponding currency. Self-transfers contribute in both directions. |
-| Net inflow | Incoming amount minus outgoing amount for the same account, currency and window. |
-| Fan-in / fan-out | Count distinct external senders / receivers in the window, excluding self-transfers. |
-
-## Run the streaming demo
+## Quickstart
 
 With Docker Desktop running, place the IBM CSV at `dataset/LI-Small/LI-Small_Trans.csv`, then run:
 
@@ -82,7 +22,7 @@ docker compose run --rm producer \
   --bootstrap-servers kafka:29092 --sort-event-time --rate 500 --limit 5000
 ```
 
-Open [monitoring](http://localhost:3000), [Kafka UI](http://localhost:8080) or [Flink UI](http://localhost:8081). Set `DS_key` in the root `.env` for analyst-initiated investigations. The rules use illustrative thresholds; event-time windows, replay and reset instructions are in the [streaming guide](streaming/README.md).
+Open [monitoring](http://localhost:3000), [Kafka UI](http://localhost:8080) or [Flink UI](http://localhost:8081). To investigate from the alert list, set `DS_key` in the root `.env` before starting the API. Open an alert, select the sender or recipient, and run the investigation to view the saved report and its graph evidence. The rules use illustrative thresholds; event-time windows, replay and reset instructions are in the [streaming guide](streaming/README.md).
 
 Run `docker compose stop` to stop services while preserving their data in `volume/`. To run the frontend alone, use `docker compose up -d --build --wait frontend`; see the [frontend guide](frontend/README.md) for local development.
 
@@ -98,7 +38,38 @@ uv run python -m graph_investigation_agent_for_aml.agent.cli \
   --format markdown --output report.md
 ```
 
-The [Agent guide](investigation/AGENT.md) covers budgets and output. Streaming results may be revised for eligible late events; very late events are recorded separately. Flink deduplication state grows with unique IDs, and the pipeline does not claim end-to-end exactly-once delivery.
+See the [Agent guide](investigation/AGENT.md) for budgets and output, and the [investigation tools guide](investigation/README.md) for graph feature definitions.
+
+## Optional XGBoost scoring and MLflow
+
+Train on the labeled HI-Small CSV with uv, then start the scorer after completing the database schema step in Quickstart.
+
+```bash
+uv run --extra ml python -m graph_investigation_agent_for_aml.scoring.train \
+  --input dataset/HI-Small/HI-Small_Trans.csv --output dataset/models/hi-small
+docker compose --profile scoring up -d --build scorer
+```
+
+Training uses HI-Small labels and time-ordered splits. The model outputs a ranking score, not a calibrated probability. The scorer uses previously archived transactions and revises scores when additional earlier transactions arrive; saved reports retain their original score snapshot. The LI-Small stream omits labels. Metrics in the generated `metrics.json` cover all held-out transactions; ranking within the rule-alert pool remains to be evaluated.
+
+To register the trained files with an existing MLflow tracking server from the host, use the `tracking` extra.
+
+```bash
+uv run --extra tracking python -m graph_investigation_agent_for_aml.scoring.register_mlflow \
+  --model-dir dataset/models/hi-small --tracking-uri http://localhost:5000
+```
+
+The scorer loads `dataset/models/hi-small/model.json` through the Compose mount and scores only archived transactions that triggered a rule alert. For the frontend Models page, set `MLFLOW_TRACKING_URI` in the root `.env` to an address reachable by the FastAPI container, such as `http://host.docker.internal:5000` for a server running on the Docker Desktop host.
+
+## Optional investigation queue
+
+After initializing the database schema, start the optional queue worker with `docker compose --profile dispatch up -d --build dispatcher`. Analysts choose the sender or recipient before queueing an alert. Duplicate alert and party pairs share one queue entry. The worker processes queued entries by priority, one investigation at a time; interrupted entries are marked failed for review.
+
+## Architecture
+
+[![Target architecture for streaming monitoring and on-demand investigation](image/aml-investigation-architecture.png)](image/aml-investigation-architecture.png)
+
+The diagram includes planned components as well as the current implementation.
 
 ## Layout
 

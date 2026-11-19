@@ -1,6 +1,6 @@
 # Streaming operations
 
-The local pipeline replays IBM AML CSV rows into Kafka. Raw Writer archives transactions in PostgreSQL; Flink computes hourly account features and emits rule alerts. The frontend displays persisted alerts and lets an analyst investigate the sender or recipient. No model is called automatically.
+The local pipeline replays IBM AML CSV rows into Kafka. Raw Writer archives transactions in PostgreSQL; Flink computes hourly account features and emits rule alerts. The frontend displays persisted alerts and lets an analyst investigate the sender or recipient. Analysts launch or queue investigations explicitly. When enabled, the XGBoost scorer automatically ranks archived transactions that triggered a rule alert.
 
 ## Start and replay
 
@@ -31,7 +31,24 @@ AML_ALERT_RULE_VERSION=demo-v1
 
 Fan alerts fire at threshold crossing; their count is not continuously updated and the displayed transaction is the crossing event. The API streams the latest 100 persisted alerts, polling roughly once per second per client. Resubmitting a fresh job reads retained Kafka history and may regenerate historical alerts.
 
-To pace replay by historical gaps, replace `--sort-event-time --rate 500` with `--speed 3600`. This automatically sorts the selected records by event time. One historical hour takes one wall-clock second at this speed. Flink still receives the original timestamps, and transactions in the same source minute are sent without a simulated gap. Omit `--limit` to replay the whole file.
+Both replay modes preserve the event timestamps sent to Flink.
+
+| Producer options | Replay behavior |
+| --- | --- |
+| `--sort-event-time --rate 500` | Sort the selected rows by event time and send them at 500 transactions per second. |
+| `--speed 3600` | Sort by event time and replay historical gaps at 3,600× speed. One historical hour takes one wall-clock second. Rows in the same source minute have no simulated gap. |
+
+Omit `--limit` to replay the whole file.
+
+## Hourly features
+
+Flink computes a separate set of **hourly event-time aggregates** by dataset, account and currency:
+
+| Streaming feature | How it is calculated |
+| --- | --- |
+| Incoming / outgoing count and amount | Count incoming / outgoing movements and sum their received / paid amounts in the corresponding currency. Self-transfers contribute in both directions. |
+| Net inflow | Incoming amount minus outgoing amount for the same account, currency and window. |
+| Fan-in / fan-out | Count distinct external senders / receivers in the window, excluding self-transfers. |
 
 ## Event time and recovery
 
