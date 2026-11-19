@@ -35,6 +35,7 @@ volume/
 
 # Local agent instructions
 AGENTS.md
+/.codex/
 
 # CodeGraph's machine-local semantic index.
 /.codegraph/

@@ -20,6 +20,14 @@ dependencies = [
 streaming = [
     "confluent-kafka>=2.8",
 ]
+ml = [
+    "duckdb>=2.0.0",
+    "scikit-learn>=1.9.1",
+    "xgboost>=3.4.1",
+]
+tracking = [
+    "mlflow-skinny==3.5.1",
+]
 
 [build-system]
 requires = ["uv_build>=0.13.5,<0.14.0"]

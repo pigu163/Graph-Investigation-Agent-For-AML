@@ -1,6 +1,6 @@
 # Frontend
 
-The Next.js application shows persisted Flink alerts and lets an analyst investigate the selected transaction's sender or recipient. The graph renderer is an opt-in synthetic preview; the free-form investigator and MLflow screens are placeholders.
+The Next.js application shows persisted Flink alerts and lets an analyst investigate the selected transaction's sender or recipient, or submit a scoped on-demand investigation. Saved reports can display their transaction graph. The standalone graph preview uses synthetic data; The models page reads registered models and run metrics when the API has an MLflow tracking URI configured.
 
 ## Run
 
@@ -15,6 +15,6 @@ Or from the project root, run `docker compose up -d --build --wait frontend`. Op
 
 The Next.js server proxies `/api/status`, `/api/alerts`, `/api/alerts/stream` and `/api/investigations` to FastAPI. `AML_API_INTERNAL_URL` defaults to `http://127.0.0.1:8000` locally and points to `http://api:8000` in Compose. An optional `AML_API_TOKEN` is forwarded server-side.
 
-Routes are `/` and `/alerts` for live alerts, `/graph` for the synthetic preview, `/investigator` for the investigation placeholder, and `/models` for the unconnected model registry. The API returns completed tool events and reports synchronously; it does not stream Agent progress or persist cases.
+Routes are `/`, `/alerts`, and `/investigator` for alerts and investigations, `/graph` for the synthetic preview, and `/models` for the model registry. The API returns tool events and reports synchronously and persists cases. Agent progress is not streamed.
 
 For development checks run `npm run lint`, `npm run typecheck` and `npm run build`. Opaque-surface and reduced-motion controls are available in the application; the graph preview also provides a keyboard-accessible transaction list.

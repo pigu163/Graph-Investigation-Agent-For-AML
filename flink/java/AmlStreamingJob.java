@@ -49,7 +49,7 @@ public final class AmlStreamingJob {
     private static final OutputTag<Movement> TOO_LATE = new OutputTag<Movement>("too-late") {};
     private static final String[] FIELDS = {"source_dataset", "source_file", "source_row", "event_time_kind",
         "event_time", "source_bank", "source_account", "destination_bank", "destination_account",
-        "amount_received", "receiving_currency", "amount_paid", "payment_currency", "payment_format", "is_laundering"};
+        "amount_received", "receiving_currency", "amount_paid", "payment_currency", "payment_format"};
 
     private static String canonical(JsonNode node) {
         if (!node.isObject()) throw new IllegalArgumentException("Event must be a JSON object");
@@ -59,12 +59,11 @@ public final class AmlStreamingJob {
             if (!node.path(field).isTextual() || node.path(field).asText().isBlank())
                 throw new IllegalArgumentException("Invalid " + field);
         }
-        JsonNode row = node.path("source_row"), label = node.path("is_laundering");
+        JsonNode row = node.path("source_row");
         if (!row.isIntegralNumber() || !row.canConvertToLong() || row.asLong() < 1
                 || !node.path("transaction_id").asText().equals(node.path("source_dataset").asText() + ":" + row.asLong()))
             throw new IllegalArgumentException("Invalid transaction identity");
-        if (!node.path("event_time_kind").asText().equals("local_unknown_timezone")
-                || !label.isIntegralNumber() || !label.canConvertToInt() || (label.asInt() != 0 && label.asInt() != 1))
+        if (!node.path("event_time_kind").asText().equals("local_unknown_timezone"))
             throw new IllegalArgumentException("Invalid IBM event metadata");
         LocalDateTime.parse(node.path("event_time").asText(), EVENT_TIME);
         OffsetDateTime.parse(node.path("ingested_at").asText());
@@ -344,7 +343,7 @@ public final class AmlStreamingJob {
         int fanIn = Integer.parseInt(System.getenv().getOrDefault("AML_FAN_IN_THRESHOLD", "10"));
         int fanOut = Integer.parseInt(System.getenv().getOrDefault("AML_FAN_OUT_THRESHOLD", "10"));
         String amount = System.getenv().getOrDefault("AML_LARGE_AMOUNT_THRESHOLD", "100000");
-        String currency = System.getenv().getOrDefault("AML_LARGE_AMOUNT_CURRENCY", "USD");
+        String currency = System.getenv().getOrDefault("AML_LARGE_AMOUNT_CURRENCY", "US Dollar");
         String version = System.getenv().getOrDefault("AML_ALERT_RULE_VERSION", "demo-v1");
         if (fanIn < 1 || fanOut < 1 || new BigDecimal(amount).signum() <= 0 || currency.isBlank() || version.isBlank())
             throw new IllegalArgumentException("Alert thresholds must be positive and currency/version nonempty");
